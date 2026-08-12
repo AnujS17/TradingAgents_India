@@ -1,0 +1,936 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TradingAgents API",
+    "description": "\nMulti-agent equity research for Indian markets (NSE/BSE).\n\n**Analysis is asynchronous.** A run takes roughly 4 minutes (fast profile) to\n14 minutes (detailed), so `POST /analyze` queues a job and returns an id to\npoll. Repeat requests for the same ticker and date are served from the\nexisting run rather than spending a new one.\n\nThis is a research tool. It surfaces evidence, the bull and bear cases, and\nthe data behind them \u2014 it is not investment advice.\n",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Health",
+        "description": "Liveness plus dependency visibility.\n\nReports \"not_configured\" rather than failing when Postgres/Redis are\nabsent, so the service is deployable and inspectable before the queue and\ndatabase exist.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analyze": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Request Analysis",
+        "description": "Queue an analysis, or hand back the existing one.\n\nReturns **200** with the existing run when this ticker/date/profile has\nalready been analysed, and **202** when a new job was queued. Callers can\ntreat both as success; the status code tells them whether they paid for a\nrun. Serving repeats from cache is what makes on-demand analysis\naffordable for a public audience, and it also means two users asking the\nsame question get the same answer rather than two independently sampled\nverdicts.",
+        "operationId": "request_analysis_analyze_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{ticker}/{analysis_date}/history": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Run History",
+        "description": "Every analysis of one question, so repeat runs can be compared.\n\nThis is what backs a \"you have run this 3 times, and they disagreed\" view.\nHiding that would be the dishonest option \u2014 the runs read identical data,\nso a split is real information about how balanced the evidence is.",
+        "operationId": "get_run_history_runs__ticker___analysis_date__history_get",
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "analysis_date",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "Analysis Date"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AnalysisProfile",
+              "default": "fast"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunHistory"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Run",
+        "description": "Poll a run. Carries reports only once status is ``completed``.",
+        "operationId": "get_run_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{ticker}/{analysis_date}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Run By Ticker",
+        "description": "Fetch a completed analysis by what it is *about* rather than by job id.\n\nThis is the endpoint a UI actually uses on a stock page: it does not know\na run id, only which company and day the user is looking at.",
+        "operationId": "get_run_by_ticker_runs__ticker___analysis_date__get",
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "analysis_date",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "Analysis Date"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AnalysisProfile",
+              "default": "fast"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List Runs",
+        "operationId": "list_runs_runs_get",
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummary"
+                  },
+                  "title": "Response List Runs Runs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalysisProfile": {
+        "type": "string",
+        "enum": [
+          "fast",
+          "detailed"
+        ],
+        "title": "AnalysisProfile",
+        "description": "Maps to the engine's config profiles.\n\n``fast`` is get_fast_config(): analysts run concurrently, 1 debate round,\nbalanced report length \u2014 and it fetches exactly the same data as\n``detailed``. See tradingagents/default_config.py."
+      },
+      "AnalysisRequest": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Ticker",
+            "description": "NSE/BSE symbol. A bare name like 'RELIANCE' is resolved to 'RELIANCE.NS' by the engine.",
+            "examples": [
+              "SIEMENS.NS",
+              "RELIANCE"
+            ]
+          },
+          "analysis_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Date",
+            "description": "Defaults to today. Also the cache key: a repeat request for the same ticker and date returns the existing run instead of spending a new one."
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AnalysisProfile",
+            "default": "fast"
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "description": "Run a fresh analysis even when one already exists for this ticker and date. The existing run is kept \u2014 results accumulate rather than being overwritten, so they can be compared.",
+            "default": false
+          },
+          "refresh_data": {
+            "type": "boolean",
+            "title": "Refresh Data",
+            "description": "Also re-fetch news, filings and social data instead of replaying the day's snapshot. Implies force. Use when something has actually happened since the last run; leave false to re-reason over identical inputs.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker"
+        ],
+        "title": "AnalysisRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          },
+          "queue": {
+            "type": "string",
+            "title": "Queue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "database",
+          "queue"
+        ],
+        "title": "HealthResponse"
+      },
+      "Reports": {
+        "properties": {
+          "market": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market"
+          },
+          "sentiment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sentiment"
+          },
+          "news": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "News"
+          },
+          "fundamentals": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fundamentals"
+          },
+          "bull_case": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bull Case"
+          },
+          "bear_case": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bear Case"
+          },
+          "investment_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Investment Plan"
+          },
+          "trader_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trader Plan"
+          },
+          "risk_debate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Debate"
+          },
+          "final_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Decision"
+          }
+        },
+        "type": "object",
+        "title": "Reports",
+        "description": "The full analysis text, stage by stage.\n\nThis is the substance of the product: a research tool surfaces the\nevidence and both sides of the argument, not just a rating. Every field is\noptional because a caller may deselect analysts."
+      },
+      "RunAccepted": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "poll_url": {
+            "type": "string",
+            "title": "Poll Url"
+          },
+          "estimated_seconds": {
+            "type": "integer",
+            "title": "Estimated Seconds",
+            "description": "Rough guide for the client's progress UI, not a promise."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "poll_url",
+          "estimated_seconds"
+        ],
+        "title": "RunAccepted",
+        "description": "202 body for a newly queued run."
+      },
+      "RunDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "analysis_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Analysis Date"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AnalysisProfile"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached",
+            "description": "True when served from an existing run rather than a new analysis. Repeat requests for the same ticker and date are free.",
+            "default": false
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reports": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Reports"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_count": {
+            "type": "integer",
+            "title": "Run Count",
+            "description": "How many analyses exist for this ticker, date and profile. Greater than 1 means someone requested a fresh run.",
+            "default": 1
+          },
+          "verdict_is_contested": {
+            "type": "boolean",
+            "title": "Verdict Is Contested",
+            "description": "True when repeat runs of this same question reached DIFFERENT ratings. The inputs are identical by construction (the day's data is snapshotted), so disagreement means the evidence is genuinely balanced \u2014 that is information for the reader, not a bug to hide.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ticker",
+          "analysis_date",
+          "profile",
+          "status",
+          "created_at"
+        ],
+        "title": "RunDetail"
+      },
+      "RunHistory": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "analysis_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Analysis Date"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AnalysisProfile"
+          },
+          "run_count": {
+            "type": "integer",
+            "title": "Run Count"
+          },
+          "ratings": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Ratings",
+            "description": "Rating from each completed run, newest first."
+          },
+          "verdict_is_contested": {
+            "type": "boolean",
+            "title": "Verdict Is Contested"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "analysis_date",
+          "profile",
+          "run_count",
+          "ratings",
+          "verdict_is_contested",
+          "runs"
+        ],
+        "title": "RunHistory",
+        "description": "Every analysis for one ticker/date/profile, newest first."
+      },
+      "RunStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "title": "RunStatus"
+      },
+      "RunSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "analysis_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Analysis Date"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AnalysisProfile"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached",
+            "description": "True when served from an existing run rather than a new analysis. Repeat requests for the same ticker and date are free.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ticker",
+          "analysis_date",
+          "profile",
+          "status",
+          "created_at"
+        ],
+        "title": "RunSummary",
+        "description": "Lightweight view \u2014 list endpoints and poll responses use this."
+      },
+      "TradeLevels": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action",
+            "description": "Buy / Hold / Sell"
+          },
+          "entry_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Price"
+          },
+          "stop_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Loss"
+          },
+          "position_sizing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Sizing"
+          }
+        },
+        "type": "object",
+        "title": "TradeLevels",
+        "description": "Execution levels from the trader stage.\n\nTHE BOOK IS LONG-ONLY: ``stop_loss`` always sits BELOW ``entry_price``,\nfor every action including Sell \u2014 where it guards the retained position\nrather than a short. Either field may be null; the engine drops a stop it\ncannot make coherent rather than emitting a misleading number."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "Verdict": {
+        "properties": {
+          "rating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating",
+            "description": "Buy / Overweight / Hold / Underweight / Sell"
+          },
+          "price_target": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Target"
+          },
+          "time_horizon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Horizon"
+          },
+          "levels": {
+            "$ref": "#/components/schemas/TradeLevels"
+          }
+        },
+        "type": "object",
+        "title": "Verdict"
+      }
+    }
+  }
+}
