@@ -28,6 +28,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from functools import lru_cache
+
+from tradingagents.dataflows.snapshot_cache import snapshot_cached
 from typing import Optional
 from urllib.parse import quote_plus
 
@@ -96,6 +98,7 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
 
 
 @lru_cache(maxsize=64)
+@snapshot_cached("google_news")
 def _search_cached(query: str, timeout: float) -> tuple[dict, ...]:
     """Fetch and parse one Google News search, cached per query for the run."""
     url = _SEARCH_URL.format(query=quote_plus(query))

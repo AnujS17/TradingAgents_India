@@ -44,3 +44,19 @@ def mock_llm_client():
         return_value=client,
     ):
         yield client
+
+
+@pytest.fixture(autouse=True)
+def _no_snapshot_cache_between_tests():
+    """Keep the on-disk snapshot cache inert during tests.
+
+    TradingAgentsGraph.propagate() freezes fetches under the run's trade date.
+    Without this, any test that calls propagate() leaves that date set for
+    every test after it — which both cross-contaminates cached fetch results
+    and writes real directories into the user's ~/.tradingagents/cache.
+    """
+    from tradingagents.dataflows.snapshot_cache import clear_snapshot_date
+
+    clear_snapshot_date()
+    yield
+    clear_snapshot_date()

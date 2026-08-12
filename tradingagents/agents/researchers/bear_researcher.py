@@ -1,4 +1,5 @@
 from tradingagents.agents.utils.agent_utils import (
+    get_brevity_instruction,
     get_instrument_context_from_state,
     get_language_instruction,
     get_india_market_instruction,
@@ -17,7 +18,10 @@ def create_bear_researcher(llm):
         sentiment_report = state["sentiment_report"]
         # news_synthesis, not the full news_report — see bull_researcher.py.
         news_report = state["news_synthesis"]
-        fundamentals_report = state["fundamentals_report"]
+        # fundamentals_synthesis, not the full fundamentals_report — same
+        # reason as news_synthesis above: the report now carries all six
+        # annual+quarterly statement blocks.
+        fundamentals_report = state["fundamentals_synthesis"]
         instrument_context = get_instrument_context_from_state(state)
         asset_type = state.get("asset_type", "stock")
         target_label = "stock" if asset_type == "stock" else "asset"
@@ -53,7 +57,7 @@ Latest world affairs news: {news_report}
         dynamic_context = f"""Conversation history of the debate: {history}
 Last bull argument: {current_response}
 Use this information to deliver a compelling bear argument, refute the bull's claims, and engage in a dynamic debate that demonstrates the risks and weaknesses of investing in the {target_label}.
-""" + get_language_instruction()
+""" + get_brevity_instruction(200) + get_language_instruction()
 
         response = invoke_with_cache_breakpoint(llm, static_context, dynamic_context)
 

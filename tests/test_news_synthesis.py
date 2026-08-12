@@ -25,6 +25,12 @@ from tradingagents.graph.propagation import Propagator
 def _state():
     return {
         "messages": [("human", "ORCL")],
+        # Each analyst reads its OWN channel now (parallel execution);
+        # seeding only "messages" leaves them empty -> KeyError.
+        "market_messages": [("human", "ORCL")],
+        "sentiment_messages": [("human", "ORCL")],
+        "news_messages": [("human", "ORCL")],
+        "fundamentals_messages": [("human", "ORCL")],
         "company_of_interest": "ORCL",
         "trade_date": "2026-06-03",
         "asset_type": "stock",
@@ -66,7 +72,9 @@ def test_news_synthesis_field_is_populated(monkeypatch):
     result = create_news_analyst(PlainLLM())(_state())
 
     assert "news_synthesis" in result
-    assert result["news_synthesis"] == result["messages"][0].content
+    # news_analyst now writes its own channel (parallel execution), so the
+    # synthesis is compared against news_messages, not the shared channel.
+    assert result["news_synthesis"] == result["news_messages"][0].content
 
 
 @pytest.mark.unit
@@ -160,7 +168,7 @@ def test_sentiment_report_news_block_is_a_pointer_not_full_content(monkeypatch):
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_reddit_posts",
-        lambda ticker: "reddit block",
+        lambda ticker, subreddits=None: "reddit block",
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_ticker_india_news",
@@ -187,7 +195,7 @@ def test_sentiment_audit_trail_still_has_full_news_content(monkeypatch):
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_reddit_posts",
-        lambda ticker: "reddit block",
+        lambda ticker, subreddits=None: "reddit block",
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_ticker_india_news",
@@ -223,7 +231,7 @@ def test_llm_prompt_still_receives_full_news_content(monkeypatch):
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_reddit_posts",
-        lambda ticker: "reddit block",
+        lambda ticker, subreddits=None: "reddit block",
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_ticker_india_news",

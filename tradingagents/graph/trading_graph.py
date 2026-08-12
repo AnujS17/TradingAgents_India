@@ -87,8 +87,15 @@ def _dedupe_tool_call(request, execute):
     """Short-circuit identical tool calls already answered in this analyst turn."""
     call = request.tool_call
     state = request.state if isinstance(request.state, dict) else {}
+    # Search every analyst channel, not just "messages": each analyst now
+    # owns its own (see AgentState), so looking only at the shared channel
+    # would find nothing and silently turn this dedupe into a no-op.
+    all_messages = []
+    for key in ("messages", "market_messages", "sentiment_messages",
+                "news_messages", "fundamentals_messages"):
+        all_messages.extend(state.get(key) or [])
     prior = _find_prior_tool_result(
-        state.get("messages", []),
+        all_messages,
         call.get("name", ""),
         call.get("args", {}),
         call.get("id", ""),
@@ -199,6 +206,44 @@ class TradingAgentsGraph:
         kwargs = {}
         provider = self.config.get("llm_provider", "").lower()
 
+        # Universal output-token ceiling. Each provider spells this
+        # differently, so it is mapped here rather than pushed into every
+        # client: Google's SDK uses max_output_tokens; Anthropic and every
+        # OpenAI-compatible Chat Completions provider (deepseek — the
+        # default — plus xai/qwen/glm/minimax/ollama) use max_tokens.
+        # openrouter is excluded because it already has its own
+        # openrouter_max_completion_tokens set further down; setting both
+        # would be ambiguous about which wins.
+        max_output_tokens = self.config.get("max_output_tokens")
+        if max_output_tokens and provider != "openrouter":
+            token_kwarg = "max_output_tokens" if provider == "google" else "max_tokens"
+            kwargs[token_kwarg] = int(max_output_tokens)
+
+        # Sampling controls, applied to EVERY provider.
+        #
+        # Previously only openrouter got temperature/top_p, so every other
+        # provider ran at its own default (~1.0) with no seed — two identical
+        # runs could and did reach opposite verdicts (LICI.NS 2026-08-11: two
+        # default-config runs 12 minutes apart returned HOLD then BUY on the
+        # same data).
+        #
+        # This REDUCES variance, it does not eliminate it: no major provider
+        # guarantees bitwise reproducibility, because batching and MoE routing
+        # shift results regardless of seed. Treat it as narrowing the spread,
+        # not as making runs identical.
+        #
+        # openrouter keeps its own openrouter_temperature/_top_p below so the
+        # two knobs cannot fight; only the seed is shared with it.
+        temperature = self.config.get("llm_temperature")
+        if temperature is not None and provider != "openrouter":
+            kwargs["temperature"] = float(temperature)
+
+        # Anthropic and Google expose no seed parameter, so this is silently a
+        # no-op there — the temperature above is the only lever for them.
+        seed = self.config.get("llm_seed")
+        if seed is not None and provider not in ("anthropic", "google"):
+            kwargs["seed"] = int(seed)
+
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
             if thinking_level:
@@ -255,6 +300,7 @@ class TradingAgentsGraph:
                     # bind_tools, so a tool node entry would be unreachable
                     # dead capacity.
                 ],
+                messages_key="market_messages",
                 wrap_tool_call=_dedupe_tool_call,
             ),
             "social": ToolNode(
@@ -262,6 +308,7 @@ class TradingAgentsGraph:
                     # News tools for social media analysis
                     get_news,
                 ],
+                messages_key="sentiment_messages",
                 wrap_tool_call=_dedupe_tool_call,
             ),
             "news": ToolNode(
@@ -271,6 +318,7 @@ class TradingAgentsGraph:
                     get_global_news,
                     get_insider_transactions,
                 ],
+                messages_key="news_messages",
                 wrap_tool_call=_dedupe_tool_call,
             ),
             "fundamentals": ToolNode(
@@ -285,6 +333,7 @@ class TradingAgentsGraph:
                     get_news,
                     get_global_news,
                 ],
+                messages_key="fundamentals_messages",
                 wrap_tool_call=_dedupe_tool_call,
             ),
         }
@@ -413,6 +462,18 @@ class TradingAgentsGraph:
         # own call returns this identical value at no extra cost.
         company_name = resolve_ticker_symbol(company_name, asset_type)
         self.ticker = company_name
+
+        # Freeze the data layer for this (ticker, date). Every news/social/
+        # filings fetcher is wrapped in snapshot_cached, which is a no-op until
+        # this key is set — so re-running the same ticker on the same date
+        # replays byte-identical inputs instead of re-pulling a rolling news
+        # feed. Measured before this: 22 of 63 headlines changed between two
+        # SIEMENS.NS runs 11 minutes apart with the market closed. Both the
+        # module-level config and self.config are set because the dataflows
+        # layer reads the former while this class reads the latter.
+        from tradingagents.dataflows.snapshot_cache import set_snapshot_date
+
+        set_snapshot_date(trade_date)
 
         # Resolve any pending memory-log entries for this ticker before the pipeline runs.
         self._resolve_pending_entries(company_name)

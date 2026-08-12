@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import logging
 from functools import lru_cache
+
+from tradingagents.dataflows.snapshot_cache import snapshot_cached
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.error import HTTPError, URLError
@@ -72,6 +74,7 @@ def _request_stream(symbol: str, timeout: float):
 
 
 @lru_cache(maxsize=128)
+@snapshot_cached("stocktwits")
 def _fetch_stocktwits_messages_cached(ticker: str, limit: int, timeout: float) -> str:
     """Fetch recent StockTwits messages for ``ticker`` and return them as a
     formatted plaintext block ready for prompt injection.

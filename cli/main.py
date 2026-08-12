@@ -27,11 +27,12 @@ from tradingagents.graph.analyst_execution import (
     AnalystWallTimeTracker,
     build_analyst_execution_plan,
     get_initial_analyst_node,
+    get_message_stream_channels,
     sync_analyst_tracker_from_chunk,
 )
 from tradingagents.agents.utils.agent_utils import resolve_ticker_symbol
 from tradingagents.dataflows.utils import safe_ticker_component
-from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.default_config import DEFAULT_CONFIG, get_fast_config
 from cli.models import AnalystType
 from cli.utils import *
 from cli.announcements import fetch_announcements, display_announcements
@@ -493,7 +494,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     layout["footer"].update(Panel(stats_table, border_style="grey50"))
 
 
-def get_user_selections():
+def get_user_selections(fast: bool = False):
     """Get all user selections before starting the analysis display."""
     # Display ASCII art welcome message
     with open(Path(__file__).parent / "static" / "welcome.txt", "r", encoding="utf-8") as f:
@@ -578,12 +579,29 @@ def get_user_selections():
     )
 
     # Step 5: Research depth
-    console.print(
-        create_question_box(
-            "Step 5: Research Depth", "Select your research depth level"
+    # Fast mode pins this to 1 (matching get_fast_config()'s own
+    # max_debate_rounds/max_risk_discuss_rounds) and skips the prompt
+    # entirely — asking the question and then silently overriding the
+    # answer would be the exact "--fast had no effect" bug this flag
+    # exists to avoid: run_analysis() applies
+    # selections["research_depth"] on top of the fast config unconditionally,
+    # so if this prompt let the user pick "Deep" (5), that would clobber
+    # the profile's trimmed debate rounds right back to worse than default.
+    if fast:
+        console.print(
+            create_question_box(
+                "Step 5: Research Depth",
+                "Fast mode: using 1 debate/risk round (this prompt is skipped in --fast)",
+            )
         )
-    )
-    selected_research_depth = select_research_depth()
+        selected_research_depth = 1
+    else:
+        console.print(
+            create_question_box(
+                "Step 5: Research Depth", "Select your research depth level"
+            )
+        )
+        selected_research_depth = select_research_depth()
 
     # Step 6: LLM Provider
     console.print(
@@ -1005,12 +1023,28 @@ def format_tool_args(args, max_length=80) -> str:
         return result[:max_length - 3] + "..."
     return result
 
-def run_analysis(checkpoint: bool = False):
+def run_analysis(checkpoint: bool = False, fast: bool = False, refresh: bool = False):
     # First get all user selections
-    selections = get_user_selections()
+    selections = get_user_selections(fast=fast)
 
-    # Create config with selected research depth
-    config = DEFAULT_CONFIG.copy()
+    # Fast mode starts from get_fast_config() (concurrent analysts, 1 debate
+    # round, balanced report length — see tradingagents/default_config.py)
+    # instead of DEFAULT_CONFIG. The override lines below still run unchanged:
+    # get_user_selections(fast=fast) already pinned research_depth to 1 above,
+    # matching the fast profile's own rounds, so re-applying it here is a
+    # no-op rather than a conflict.
+    config = get_fast_config() if fast else DEFAULT_CONFIG.copy()
+    if fast:
+        console.print(
+            "[yellow]Fast mode: analysts run concurrently, 1 debate/risk "
+            "round, balanced report length. Same data as a default run.[/yellow]"
+        )
+    # Re-running a ticker+date replays the snapshot taken the first time, so
+    # two runs are comparable instead of reading a news feed that has moved
+    # underneath them. --refresh opts out when fresh data is actually wanted.
+    config["snapshot_cache_enabled"] = not refresh
+    if refresh:
+        console.print("[yellow]--refresh: ignoring cached snapshot, re-fetching live data.[/yellow]")
     config["max_debate_rounds"] = selections["research_depth"]
     config["max_risk_discuss_rounds"] = selections["research_depth"]
     config["quick_think_llm"] = selections["shallow_thinker"]
@@ -1164,7 +1198,7 @@ def run_analysis(checkpoint: bool = False):
         # Update agent status to in_progress for the first analyst
         first_analyst = get_initial_analyst_node(analyst_execution_plan)
         message_buffer.update_agent_status(first_analyst, "in_progress")
-        analyst_wall_time_tracker.mark_started(selected_analyst_keys[0])
+        analyst_wall_time_tracker.mark_launched()
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
         # Create spinner text
@@ -1184,26 +1218,40 @@ def run_analysis(checkpoint: bool = False):
         args = graph.propagator.get_graph_args(callbacks=[stats_handler])
 
         # Stream the analysis
+        message_stream_channels = get_message_stream_channels(analyst_execution_plan)
         trace = []
         for chunk in graph.graph.stream(init_agent_state, **args):
-            # Process all messages in chunk, deduplicating by message ID
-            for message in chunk.get("messages", []):
-                msg_id = getattr(message, "id", None)
-                if msg_id is not None:
-                    if msg_id in message_buffer._processed_message_ids:
-                        continue
-                    message_buffer._processed_message_ids.add(msg_id)
+            # Process all messages in chunk, deduplicating by message ID.
+            #
+            # The analysts no longer write to the shared "messages" channel —
+            # each owns its own (market_messages, sentiment_messages, ...) so
+            # their ReAct loops cannot interleave under parallel fan-out. That
+            # split is unconditional (see setup.py), so reading only "messages"
+            # here silently dropped EVERY analyst tool call and agent message
+            # from both message_tool.log and the live display, in fast and
+            # default mode alike. Observed on the LICI.NS 22:39 run: the log
+            # showed only the pre-fetch calls (which arrive separately via
+            # audit_tool_calls) and no get_fundamentals/get_balance_sheet at
+            # all, making a run that did fetch its data look like one that
+            # invented it. Read the shared channel AND every per-analyst one.
+            for channel in message_stream_channels:
+                for message in chunk.get(channel, []):
+                    msg_id = getattr(message, "id", None)
+                    if msg_id is not None:
+                        if msg_id in message_buffer._processed_message_ids:
+                            continue
+                        message_buffer._processed_message_ids.add(msg_id)
 
-                msg_type, content = classify_message_type(message)
-                if content and content.strip():
-                    message_buffer.add_message(msg_type, content)
+                    msg_type, content = classify_message_type(message)
+                    if content and content.strip():
+                        message_buffer.add_message(msg_type, content)
 
-                if hasattr(message, "tool_calls") and message.tool_calls:
-                    for tool_call in message.tool_calls:
-                        if isinstance(tool_call, dict):
-                            message_buffer.add_tool_call(tool_call["name"], tool_call["args"])
-                        else:
-                            message_buffer.add_tool_call(tool_call.name, tool_call.args)
+                    if hasattr(message, "tool_calls") and message.tool_calls:
+                        for tool_call in message.tool_calls:
+                            if isinstance(tool_call, dict):
+                                message_buffer.add_tool_call(tool_call["name"], tool_call["args"])
+                            else:
+                                message_buffer.add_tool_call(tool_call.name, tool_call.args)
 
             for audit_call in chunk.get("audit_tool_calls", []) or []:
                 name = audit_call.get("name")
@@ -1223,6 +1271,11 @@ def run_analysis(checkpoint: bool = False):
                     # message_tool.log, LAURUSLABS.BO run 2026-08-10).
                     is_new_call = message_buffer.add_tool_call(name, args)
                     if is_new_call:
+                        # Pre-fetches bypass LangChain, so the stats handler's
+                        # on_tool_start hook never sees them — without this the
+                        # header reads "Tools: 0" on a run that made 17 data
+                        # fetches. See StatsCallbackHandler.record_prefetch.
+                        stats_handler.record_prefetch()
                         result = audit_call.get("result")
                         if result is not None:
                             message_buffer.add_message("Data", str(result))
@@ -1372,12 +1425,26 @@ def analyze(
         "--clear-checkpoints",
         help="Delete all saved checkpoints before running (force fresh start).",
     ),
+    fast: bool = typer.Option(
+        False,
+        "--fast",
+        help="Fast profile: analysts run concurrently, 1 debate/risk round, "
+        "balanced report length. Fetches exactly the same data as a default "
+        "run. See tradingagents/default_config.get_fast_config.",
+    ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Ignore the cached snapshot and re-fetch news/social/filings. "
+        "By default a re-run of the same ticker and date replays identical "
+        "inputs so results are comparable.",
+    ),
 ):
     if clear_checkpoints:
         from tradingagents.graph.checkpointer import clear_all_checkpoints
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])
         console.print(f"[yellow]Cleared {n} checkpoint(s).[/yellow]")
-    run_analysis(checkpoint=checkpoint)
+    run_analysis(checkpoint=checkpoint, fast=fast, refresh=refresh)
 
 
 if __name__ == "__main__":

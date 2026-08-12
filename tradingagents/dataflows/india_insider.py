@@ -28,6 +28,8 @@ import io
 import logging
 from datetime import datetime
 from functools import lru_cache
+
+from tradingagents.dataflows.snapshot_cache import snapshot_cached
 from typing import Optional
 
 from .config import get_config
@@ -51,6 +53,7 @@ def _base_symbol(ticker: str) -> str:
 
 
 @lru_cache(maxsize=1)
+@snapshot_cached("nse_bulk_deals")
 def _fetch_bulk_deals_csv() -> Optional[str]:
     """Fetch the raw NSE bulk-deals CSV once per process; cached thereafter.
 

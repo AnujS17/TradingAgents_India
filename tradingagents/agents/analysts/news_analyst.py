@@ -8,6 +8,10 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
     get_news,
     get_india_market_instruction,
+    get_report_style,
+    is_length_limited,
+    keeps_markdown_tables,
+    scale_word_budget,
 )
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.india_news import fetch_global_india_news
@@ -63,19 +67,53 @@ Retail social posts follow. For Indian tickers this stream carries a lot of news
 </prefetched_social_wire>
 """
 
-        system_message = (
-            f"""You are a news researcher tasked with analyzing recent news and trends. Pre-fetched news data is provided below; ground your report only in it. Do not call or imply additional news tools were used. Provide specific, actionable insights with supporting evidence to help traders make informed decisions.
+        # "concise" (fast platform profile) requests a much tighter synthesis
+        # — see default_config.get_fast_config for why. The opening
+        # grounding sentence ("Pre-fetched news data...", "ground your
+        # report only in it", "Do not call or imply...") is unconditional
+        # either way — that's an accuracy guardrail, not verbosity.
+        style = get_report_style()
+        concise = style == "concise"
+        if is_length_limited():
+            # Under "balanced" these two numbers are the whole point — see the
+            # note on _BALANCED_WORD_SCALE in agent_utils. At 8 bullets the
+            # SIEMENS.NS run evicted the demerger filing and then miscredited a
+            # separately-listed company's profit to this ticker.
+            word_cap = scale_word_budget(300)
+            bullet_cap = 8 if concise else 20
+            table_rule = (
+                "No markdown table."
+                if concise
+                else "Append a compact markdown table of the material items with a column "
+                "identifying WHICH listed entity each item belongs to — this ticker, its "
+                "parent, a demerged or separately-listed affiliate, or an unrelated peer."
+            )
+            synthesis_shape = f"""Your entire output is reused downstream in place of these raw source blocks — 5 separate debate/risk-analysis agents read only your synthesis, not the pre-fetched blocks above, so it must be self-sufficient. HARD LIMIT: {word_cap} words maximum for the whole output. Write it in exactly this shape:
 
-Company news below covers {start_date} to {current_date}; the global and India-market blocks cover roughly the past week. Company coverage is deliberately wider because Indian mid- and small-caps are reported on sparsely. Every article is dated — weight recent items more heavily, and say explicitly how old a story is when you lean on it, rather than implying an older item is breaking news.
+1. A brief narrative (2-3 sentences): the overall picture and what it means for the trade.
+2. **### Coverage** — {bullet_cap} bullets MAXIMUM, one line each, format `- [source, date]: <highlight>`. Prioritise company-specific items (company news, exchange filings, social-wire leads) — those are the ones downstream agents cannot get anywhere else. Compress the ENTIRE global/macro and India-market blocks into at most 1 bullet combined; those are background, not the trade.
+3. **### Bullish Points** — up to {3 if concise else 6} bullets, one line each.
+4. **### Bearish Points** — up to {3 if concise else 6} bullets, one line each.
 
-Your entire output is reused downstream in place of these raw source blocks — 5 separate debate/risk-analysis agents read only your synthesis, not the pre-fetched blocks above, so it must be self-sufficient: every material fact from the sources needs to survive into your output, but as dense structured points rather than re-quoted prose. Write it in exactly this shape:
+Never drop an exchange filing that records a corporate action (demerger, spin-off, merger, scheme of arrangement) to save space — it is what makes every other figure comparable, and it is exactly the item that gets cut first because it is not news.
+
+If you must cut, cut macro noise before company-specific facts. {table_rule}"""
+        else:
+            synthesis_shape = """Your entire output is reused downstream in place of these raw source blocks — 5 separate debate/risk-analysis agents read only your synthesis, not the pre-fetched blocks above, so it must be self-sufficient: every material fact from the sources needs to survive into your output, but as dense structured points rather than re-quoted prose. Write it in exactly this shape:
 
 1. A brief narrative (3-6 sentences): the overall picture and what it means for the trade.
 2. **### Coverage** — one bullet per material item, format `- [source, date]: <highlight>`. Give full coverage to every company-specific item (company news, exchange filings, social-wire leads) since those are the ones downstream agents cannot get anywhere else. For the global/macro and India-market blocks, merge near-duplicate headlines on the same story into one bullet rather than repeating each near-identical wire update — Indian financial press tends to file 5-10 near-identical Hormuz/oil/index-level updates from the same day, and each needs to survive as one synthesized point, not five.
 3. **### Bullish Points** — the items that argue for the stock.
 4. **### Bearish Points** — the items that argue against it.
 
-Do not omit a company-specific fact to save space; compress macro noise instead.
+Do not omit a company-specific fact to save space; compress macro noise instead."""
+
+        system_message = (
+            f"""You are a news researcher tasked with analyzing recent news and trends. Pre-fetched news data is provided below; ground your report only in it. Do not call or imply additional news tools were used. Provide specific, actionable insights with supporting evidence to help traders make informed decisions.
+
+Company news below covers {start_date} to {current_date}; the global and India-market blocks cover roughly the past week. Company coverage is deliberately wider because Indian mid- and small-caps are reported on sparsely. Every article is dated — weight recent items more heavily, and say explicitly how old a story is when you lean on it, rather than implying an older item is breaking news.
+
+{synthesis_shape}
 
 <prefetched_company_news>
 {company_news_block}
@@ -96,7 +134,7 @@ The block below is filed by the company with the exchange, so it is the authorit
 </prefetched_exchange_filings>
 {social_wire_section}"""
             + get_india_market_instruction("news")
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+            + (""" Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.""" if keeps_markdown_tables() and not is_length_limited() else "")
             + get_language_instruction()
         )
 
@@ -121,7 +159,7 @@ The block below is filed by the company with the exchange, so it is the authorit
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        result = llm.invoke(prompt.format_messages(messages=state["messages"]))
+        result = llm.invoke(prompt.format_messages(messages=state["news_messages"]))
 
         report = (
             "## Pre-Fetched Company News Used\n\n"
@@ -144,7 +182,7 @@ The block below is filed by the company with the exchange, so it is the authorit
             # (fundamentals_analyst), inflating tokens on every one of
             # its ReAct turns. The full report (raw blocks + analysis)
             # still reaches the saved report via news_report.
-            "messages": [AIMessage(content=result.content)],
+            "news_messages": [AIMessage(content=result.content)],
             "news_report": report,
             # news_report (above) is the full raw-blocks + analysis version,
             # saved to disk/CLI for the human record — it is what a

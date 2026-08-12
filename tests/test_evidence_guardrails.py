@@ -13,13 +13,37 @@ def test_fundamentals_prompt_requires_evidence_and_currency_discipline():
     )
 
     assert "Provide specific, actionable insights with supporting evidence" in text
-    assert "Use the available tools" in text
+    # The statements are pre-fetched now rather than left to a ReAct loop, so
+    # the prompt grounds the model in the supplied blocks instead of offering
+    # tools. See fundamentals_analyst.py for the freq= defaulting bug this
+    # replaced.
+    assert "All the financial data you need is pre-fetched below" in text
+    assert "do not call or imply additional tools were used" in text
     assert "get_fundamentals" in text
     assert "get_balance_sheet" in text
     assert "get_cashflow" in text
     assert "get_income_statement" in text
     assert "get_india_market_instruction(\"fundamentals\")" in text
     assert "get_language_instruction()," not in text
+
+
+@pytest.mark.unit
+def test_fundamentals_prompt_keeps_trend_and_reconciliation_discipline():
+    """These two obligations must not be trimmable by report_style.
+
+    A concise fast run on HDFCBANK.NS stated vendor ROE and equity as fact
+    where the detailed run found them mutually irreconcilable, and quoted a
+    forward P/E without ever saying what growth it assumed. Both are accuracy
+    discipline, so they sit outside the concise/detailed branch.
+    """
+    text = (ROOT / "tradingagents/agents/analysts/fundamentals_analyst.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "a single quarter is not a trend" in text
+    assert "State what a forward multiple assumes" in text
+    assert "cannot be reconciled" in text
+    assert "marked unavailable, say so explicitly" in text
 
 
 @pytest.mark.unit
@@ -65,8 +89,19 @@ def test_trader_omits_unsupported_indicator_derived_levels():
     assert "get_india_market_instruction(\"trader\")" in text
     assert "anchored in the analysts' reports" in schema_text
     assert "the research plan" in schema_text
-    assert "Optional entry price target" in schema_text
-    assert "Optional stop-loss price" in schema_text
+    # The level fields used to be described as a bare "Optional entry price
+    # target" / "Optional stop-loss price". That wording is what let the
+    # trader fabricate levels — which is precisely what this test exists to
+    # prevent — so it is now replaced by an explicit instruction not to
+    # invent a number, plus the entry/stop relationship. See TraderProposal.
+    # Substrings must be contiguous in the SOURCE: this test greps the file,
+    # and these descriptions are built from adjacent string literals, so a
+    # phrase spanning a line break would never match. The runtime description
+    # text is asserted in test_concise_schemas.py instead.
+    assert "Never invent a number to fill" in schema_text
+    assert "never equal entry_price" in schema_text
+    assert "strictly BELOW entry_price" in schema_text
+    assert "long-only" in schema_text
 
 
 @pytest.mark.unit

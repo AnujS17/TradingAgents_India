@@ -38,7 +38,8 @@ def _investment_state(**overrides):
         "sentiment_report": "SENTIMENT_MARKER",
         "news_report": "FULL_NEWS_REPORT_MARKER_should_not_appear",
         "news_synthesis": "COMPACT_NEWS_SYNTHESIS_MARKER",
-        "fundamentals_report": "FUNDAMENTALS_MARKER",
+        "fundamentals_report": "FULL_FUNDAMENTALS_REPORT_MARKER_should_not_appear",
+        "fundamentals_synthesis": "FUNDAMENTALS_MARKER",
         "investment_debate_state": {
             "history": "HISTORY_MARKER",
             "bull_history": "",
@@ -60,7 +61,8 @@ def _risk_state(**overrides):
         "sentiment_report": "SENTIMENT_MARKER",
         "news_report": "FULL_NEWS_REPORT_MARKER_should_not_appear",
         "news_synthesis": "COMPACT_NEWS_SYNTHESIS_MARKER",
-        "fundamentals_report": "FUNDAMENTALS_MARKER",
+        "fundamentals_report": "FULL_FUNDAMENTALS_REPORT_MARKER_should_not_appear",
+        "fundamentals_synthesis": "FUNDAMENTALS_MARKER",
         "trader_investment_plan": "TRADER_DECISION_MARKER",
         "risk_debate_state": {
             "history": "HISTORY_MARKER",
@@ -115,6 +117,10 @@ def test_reads_news_synthesis_not_news_report(name, factory, state_fn, monkeypat
     combined = captured["static"] + captured["dynamic"]
     assert "COMPACT_NEWS_SYNTHESIS_MARKER" in combined
     assert "FULL_NEWS_REPORT_MARKER_should_not_appear" not in combined
+    # Same guard for fundamentals: the full report now carries six
+    # annual+quarterly statement blocks and must never reach these prompts.
+    assert "FUNDAMENTALS_MARKER" in combined
+    assert "FULL_FUNDAMENTALS_REPORT_MARKER_should_not_appear" not in combined
 
 
 @pytest.mark.unit

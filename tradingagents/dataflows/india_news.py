@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
+
+from tradingagents.dataflows.snapshot_cache import snapshot_cached
 from typing import Iterable, Optional
 
 import requests
@@ -92,6 +94,7 @@ def _fetch_articles(feeds: Iterable[dict]) -> list[dict]:
 
 
 @lru_cache(maxsize=8)
+@snapshot_cached("india_news")
 def _fetch_articles_cached(feeds_key: tuple[tuple[str, str], ...]) -> list[dict]:
     articles: list[dict] = []
     for name, url in feeds_key:

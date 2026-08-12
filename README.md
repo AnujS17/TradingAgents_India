@@ -94,7 +94,32 @@ The CLI walks you through: ticker, analysis date, which analysts to run, researc
 ```bash
 tradingagents analyze --checkpoint           # resume a crashed/interrupted run
 tradingagents analyze --clear-checkpoints    # reset saved checkpoints before running
+tradingagents analyze --fast                 # fast platform profile — see below
 ```
+
+### Fast mode
+
+A default run analyses each of the four analysts one after another and asks every one of them for an exhaustive report, which commonly takes 10+ minutes end to end. `--fast` cuts that to roughly 3-4 minutes for interactive/platform use:
+
+- the four analysts run **concurrently** instead of chained — they are independent (each needs only the ticker and date, none reads another's report), so the analyst phase collapses from the sum of four round-trips to roughly the slowest one
+- 1 debate round instead of 2 (bull/bear and the 3-way risk debate each still get one full pass — no perspective is dropped, just the second iteration)
+- `report_style="balanced"`: length budgets on the write-ups, but the summary tables and full source coverage are kept
+
+**Fast mode fetches exactly the same data as a default run.** An earlier version also trimmed news article caps, narrowed the Reddit scope and dropped GDELT; all of that was reverted, because input size is not what costs wall-clock time (output generation is) and starving the inputs made the two modes incomparable on quality.
+
+`--fast` also skips the interactive "Research Depth" prompt (it's pinned to match the profile) so an accidental Medium/Deep answer can't override the trim.
+
+See `tradingagents/default_config.get_fast_config()` for the exact values.
+
+### Reproducible runs
+
+Re-running the same ticker and analysis date replays the **same inputs**. News, social and exchange-filing fetches are snapshotted to disk per (ticker, date), because live feeds move underneath you: two runs 11 minutes apart with the market closed differed by 22 of 63 news headlines, which is enough to change the verdict on its own.
+
+```bash
+tradingagents analyze --refresh    # ignore the snapshot and pull fresh data
+```
+
+A different analysis date is always a fresh fetch, so daily use is unaffected. Sampling is also pinned (`llm_temperature`, `llm_seed`) across every provider rather than just OpenRouter. Note this narrows run-to-run variance — it does not eliminate it, since no major provider guarantees bitwise-reproducible output even at a fixed seed.
 
 ## Python Usage
 
@@ -118,6 +143,15 @@ config["quick_think_llm"] = "claude-haiku-4-5"
 config["max_debate_rounds"] = 2
 
 ta = TradingAgentsGraph(debug=True, config=config)
+_, decision = ta.propagate("TCS.NS", "2026-01-15")
+```
+
+Or start from the fast platform profile instead (see [Fast mode](#fast-mode) above):
+
+```python
+from tradingagents.default_config import get_fast_config
+
+ta = TradingAgentsGraph(debug=True, config=get_fast_config())
 _, decision = ta.propagate("TCS.NS", "2026-01-15")
 ```
 

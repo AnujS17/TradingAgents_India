@@ -65,6 +65,25 @@ class StatsCallbackHandler(BaseCallbackHandler):
         with self._lock:
             self.tool_calls += 1
 
+    def record_prefetch(self) -> None:
+        """Count one pre-fetched data call.
+
+        ``on_tool_start`` is a LangChain callback: it only fires when LangChain
+        itself invokes a tool, i.e. from a ReAct ToolNode. The analysts fetch
+        their data by calling ``tool.func(...)`` directly, which bypasses
+        LangChain entirely and therefore never reaches that hook.
+
+        Market, news and sentiment had already moved to pre-fetching, so
+        fundamentals was the last analyst making real ReAct calls. When it
+        moved too (2026-08-12), the counter hit **"Tools: 0"** on a run that
+        had in fact made 17 data fetches — the display was reporting the
+        mechanism, not the work. The CLI calls this from its
+        ``audit_tool_calls`` loop, which is already deduplicated by
+        ``MessageBuffer.add_tool_call``, so each distinct fetch counts once.
+        """
+        with self._lock:
+            self.tool_calls += 1
+
     def get_stats(self) -> Dict[str, Any]:
         """Return current statistics."""
         with self._lock:

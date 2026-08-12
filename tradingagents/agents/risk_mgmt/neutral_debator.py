@@ -1,4 +1,5 @@
 from tradingagents.agents.utils.agent_utils import (
+    get_brevity_instruction,
     get_instrument_context_from_state,
     get_language_instruction,
     get_india_market_instruction,
@@ -19,7 +20,10 @@ def create_neutral_debator(llm):
         sentiment_report = state["sentiment_report"]
         # news_synthesis, not the full news_report — see bull_researcher.py.
         news_report = state["news_synthesis"]
-        fundamentals_report = state["fundamentals_report"]
+        # fundamentals_synthesis, not the full fundamentals_report — same
+        # reason as news_synthesis above: the report now carries all six
+        # annual+quarterly statement blocks.
+        fundamentals_report = state["fundamentals_synthesis"]
         instrument_context = get_instrument_context_from_state(state)
 
         # Static across the whole risk debate — see aggressive_debator.py.
@@ -43,7 +47,7 @@ Company Fundamentals Report: {fundamentals_report}
 
         dynamic_context = f"""Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the conservative analyst: {current_conservative_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Engage actively by analyzing both sides critically, addressing weaknesses in the aggressive and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting.""" + get_india_market_instruction("neutral_risk") + get_language_instruction()
+Engage actively by analyzing both sides critically, addressing weaknesses in the aggressive and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting.""" + get_india_market_instruction("neutral_risk") + get_brevity_instruction(180) + get_language_instruction()
 
         response = invoke_with_cache_breakpoint(llm, static_context, dynamic_context)
 

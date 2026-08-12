@@ -1,3 +1,4 @@
+import copy
 import os
 
 _TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
@@ -16,6 +17,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
+    "TRADINGAGENTS_LLM_TEMPERATURE":      "llm_temperature",
+    "TRADINGAGENTS_LLM_SEED":             "llm_seed",
 }
 
 
@@ -60,6 +63,32 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "openrouter_temperature": 0.2,
     "openrouter_top_p": 0.9,
 
+    # Sampling controls, applied to every provider by
+    # TradingAgentsGraph._get_provider_kwargs. Before these existed only
+    # openrouter set temperature, so every other provider sampled at its own
+    # default (~1.0) with no seed and identical runs returned opposite
+    # verdicts (LICI.NS 2026-08-11: two default runs 12 minutes apart gave
+    # HOLD then BUY).
+    #
+    # 0.2 rather than 0.0 deliberately: the bull/bear and 3-way risk debates
+    # are adversarial, and a fully greedy decode makes the opposing agents
+    # converge on near-identical phrasing, which weakens the disagreement the
+    # structure exists to produce. Set to 0.0 if you want maximum determinism
+    # and are willing to trade that.
+    #
+    # Seeds are honoured by OpenAI-compatible endpoints; Anthropic and Google
+    # expose no seed parameter, so temperature is the only lever there. NO
+    # provider guarantees bitwise reproducibility even with both set.
+    "llm_temperature": 0.2,
+    "llm_seed": 42,
+
+    # Freeze fetched news/social/filings per (ticker, analysis date) so a
+    # re-run replays identical inputs. See dataflows/snapshot_cache.py for the
+    # measurement that motivated it. Set False (or pass --refresh) to pull
+    # fresh data; a different analysis date is a different key either way, so
+    # daily runs are unaffected.
+    "snapshot_cache_enabled": True,
+
     "checkpoint_enabled": False,
     "output_language": "English",
 
@@ -73,6 +102,39 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "news_article_limit": 30,
     "global_news_article_limit": 20,
     "global_news_lookback_days": 7,
+
+    # Hard ceiling on tokens the model may GENERATE per call. None = no cap
+    # (previous behaviour for every provider except openrouter, which had its
+    # own openrouter_max_completion_tokens).
+    #
+    # This is the only DETERMINISTIC lever on run time. Wall-clock is
+    # dominated by output-token generation, not input size or network: a
+    # measured default run produced ~8,400 words (~11k tokens) of analyst
+    # prose alone, before the 8 debate/manager calls, and at a typical
+    # ~30-50 tok/s that alone is most of a 10-minute run. Prompt wording
+    # ("be concise") is only a request a model may ignore; max_tokens is
+    # enforced by the API.
+    #
+    # Deliberately set as a generous SAFETY CEILING, not the primary lever:
+    # the concise prompts target ~250-350 words (~350-470 tokens), so a
+    # compliant response never reaches the cap and is never truncated
+    # mid-sentence. It only stops a runaway. This matters most for the
+    # structured-output agents (sentiment, research manager, trader,
+    # portfolio manager) — truncated JSON fails to parse, falls back to a
+    # SECOND full free-text call, and would make a run slower, not faster.
+    "max_output_tokens": None,
+
+    # "detailed" (default) reproduces the original verbose report-writing
+    # instructions verbatim in every analyst prompt. "concise" is read by
+    # market/fundamentals/news/sentiment analysts to request a shorter
+    # write-up instead — see get_fast_config() below. Evidence/citation
+    # discipline in those prompts is separate instruction text, not gated by
+    # this flag, so accuracy guardrails are identical either way.
+    "report_style": "detailed",
+
+    # None = use tradingagents.dataflows.reddit.DEFAULT_SUBREDDITS (all 7).
+    # get_fast_config() narrows this to the top 3 by subscriber count.
+    "reddit_subreddits": None,
 
     # How far back company-specific news is collected. Deliberately much
     # wider than the 7-day global window: Indian mid- and small-caps get
@@ -260,3 +322,102 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "":     "SPY",
     },
 })
+
+
+# -----------------------------------------------------------------------
+# Fast platform profile — trims wall-clock time for interactive/retail-
+# platform use where a 10+ minute run is unacceptable, while keeping every
+# accuracy/evidence guardrail from DEFAULT_CONFIG intact: the citation,
+# "don't invent numbers", and filing-over-rumor precedence instructions in
+# each analyst prompt are separate text, untouched by anything below.
+#
+# Opt-in and additive: DEFAULT_CONFIG is never mutated, and nothing here
+# applies unless a caller explicitly requests get_fast_config(). What
+# changed and why:
+#
+#   * max_debate_rounds / max_risk_discuss_rounds: 2 -> 1. This is the
+#     single biggest lever: it halves the two sequential debate phases from
+#     4+6=10 LLM calls to 2+3=5. Each call in a debate must wait for the
+#     previous one to finish (no parallelism is possible there by graph
+#     structure), so this trims wall-clock time directly, not just cost.
+#     At 1 round the bull/bear debate is still a full argument-and-rebuttal
+#     exchange (bear responds to the specific bull argument, not a vacuum),
+#     and the risk debate still gives all 3 analysts one full turn each —
+#     what's cut is the second iteration, not the debate itself.
+#   * report_style: "concise" — the analyst prompts request a shorter
+#     write-up. Shorter requested output means less generation wall-time,
+#     and is what a retail-platform UI actually wants over an exhaustive
+#     research report.
+#
+# THE INVARIANT (revised 2026-08-12): fast mode changes only how the work is
+# SCHEDULED. It must not change what the model sees, nor how much it writes.
+#
+# The earlier version of this profile also shortened the output
+# (`report_style = "concise"`, `max_output_tokens = 1400`). That was removed
+# because **for an LLM, output length IS reasoning depth** — the model reasons
+# in the tokens it writes, so a word cap does not merely compress the write-up,
+# it forces a SELECTION, and qualifying facts lose to newsworthy ones.
+#
+# The worked example, SIEMENS.NS 2026-08-12 (fast 11:00 vs detailed 11:16, one
+# debate round each, identical data — so the cap was the only variable):
+#   * The concise news template allows "8 bullets MAXIMUM, one line each" and
+#     forbids the summary table. The fast run's Coverage hit exactly 8.
+#   * The 07-Apr-2025 Demerger filing lost its slot to a fresher headline,
+#     while "Siemens Energy gas-turbine backlog ~70 GW" kept one.
+#   * With the disqualifying fact gone, the fast run then wrote, as a BULLISH
+#     point: "Sister co Siemens Energy India Q1 profit +70% signals group
+#     demand strength" — crediting a company that was demerged away in 2025.
+#   * The detailed run had room for the demerger bullet AND the table, tagged
+#     its rows "(separate entity)", and inverted the inference: the ecosystem
+#     is booming "yet Siemens Limited's core profit is falling".
+#
+# One line each is enough to ASSERT a fact but not to QUALIFY it. That is the
+# whole difference. Restoring full-length prompts costs wall-clock and buys
+# back the reasoning; the user chose depth over latency.
+#
+# Article caps (news/global/india), the reddit_subreddits narrowing and the
+# gdelt removal used to live here and violated that. They were reverted on
+# 2026-08-12 after the SIEMENS.NS comparison: input size is not what costs
+# wall-clock time (output generation is — see PERF_HANDOFF.md), so starving
+# the inputs bought very little speed while making fast and detailed runs
+# genuinely incomparable. If you are tempted to re-add an input trim to buy
+# latency, measure it first; the last set was not worth what it cost.
+#
+# The one asymmetry that remains is unavoidable and is NOT a data trim:
+# analysts run concurrently rather than chained.
+# -----------------------------------------------------------------------
+
+
+def get_fast_config() -> dict:
+    """Return a deep copy of DEFAULT_CONFIG with the fast platform profile applied.
+
+    Deep-copied (not a shallow ``{**DEFAULT_CONFIG, **overrides}`` spread) so
+    the nested ``data_vendors``/``tool_vendors`` dicts can never be mutated on
+    DEFAULT_CONFIG itself, and so a future top-level override cannot silently
+    clobber sibling keys inside them (replacing the whole ``data_vendors``
+    dict would also delete ``core_stock_apis``/``technical_indicators``/
+    ``fundamental_data``, breaking price and fundamentals data entirely).
+
+    Every key set below affects output length or scheduling only. No key here
+    reduces the data fetched — see the invariant above.
+    """
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["max_debate_rounds"] = 1
+    config["max_risk_discuss_rounds"] = 1
+    # Run the four analysts concurrently instead of chained. They are
+    # independent (each needs only ticker + date, none reads another's
+    # report) and each now owns its own message channel, so this is a pure
+    # latency win: the analyst phase collapses from the sum of four LLM
+    # round-trips to roughly the slowest one. Set back to 1 to restore the
+    # sequential chain.
+    #
+    # This is now the ONLY lever left, and deliberately so. `report_style =
+    # "concise"` and `max_output_tokens = 1400` used to live here and were
+    # removed on 2026-08-12 — see the note below.
+    config["analyst_concurrency_limit"] = 4
+    # "balanced", not "concise": length discipline, but the coverage-bullet cap
+    # is raised and the summary tables are kept. Those two structural
+    # allowances — not raw word count — are what the SIEMENS.NS demerger
+    # failure actually turned on. See agent_utils._BALANCED_WORD_SCALE.
+    config["report_style"] = "balanced"
+    return config

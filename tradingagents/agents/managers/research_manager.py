@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from tradingagents.agents.schemas import ResearchPlan, render_research_plan
+from tradingagents.agents.schemas import (
+    CONCISE_RESEARCH_PLAN_OVERRIDES,
+    ResearchPlan,
+    concise_variant,
+    render_research_plan,
+)
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
@@ -11,10 +16,18 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.dataflows.config import get_config
 
 
 def create_research_manager(llm):
-    structured_llm = bind_structured(llm, ResearchPlan, "Research Manager")
+    # Schema descriptions are the real output instructions for structured
+    # agents — see schemas.concise_variant.
+    _schema = (
+        concise_variant(ResearchPlan, CONCISE_RESEARCH_PLAN_OVERRIDES)
+        if get_config().get("report_style", "detailed") == "concise"
+        else ResearchPlan
+    )
+    structured_llm = bind_structured(llm, _schema, "Research Manager")
 
     def research_manager_node(state) -> dict:
         instrument_context = get_instrument_context_from_state(state)

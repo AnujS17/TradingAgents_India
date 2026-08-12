@@ -6,7 +6,12 @@ import functools
 
 from langchain_core.messages import AIMessage
 
-from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
+from tradingagents.agents.schemas import (
+    CONCISE_TRADER_OVERRIDES,
+    TraderProposal,
+    concise_variant,
+    render_trader_proposal,
+)
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
@@ -16,10 +21,18 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.dataflows.config import get_config
 
 
 def create_trader(llm):
-    structured_llm = bind_structured(llm, TraderProposal, "Trader")
+    # Schema descriptions are the real output instructions for structured
+    # agents — see schemas.concise_variant.
+    _schema = (
+        concise_variant(TraderProposal, CONCISE_TRADER_OVERRIDES)
+        if get_config().get("report_style", "detailed") == "concise"
+        else TraderProposal
+    )
+    structured_llm = bind_structured(llm, _schema, "Trader")
 
     def trader_node(state, name):
         company_name = state["company_of_interest"]

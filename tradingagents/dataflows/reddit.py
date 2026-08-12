@@ -10,6 +10,8 @@ import logging
 import os
 import time
 from functools import lru_cache
+
+from tradingagents.dataflows.snapshot_cache import snapshot_cached
 from typing import Iterable, Optional
 from urllib.parse import quote_plus
 
@@ -333,6 +335,7 @@ def fetch_reddit_posts(
 
 
 @lru_cache(maxsize=128)
+@snapshot_cached("reddit")
 def _fetch_reddit_posts_cached(
     ticker: str,
     subreddits: tuple[str, ...],

@@ -143,7 +143,12 @@ class MinimaxChatOpenAI(NormalizedChatOpenAI):
 # Kwargs forwarded from user config to ChatOpenAI
 _PASSTHROUGH_KWARGS = (
     "timeout", "max_retries", "reasoning_effort", "reasoning",
-    "max_completion_tokens", "temperature", "top_p", "extra_body",
+    # max_tokens is the Chat Completions output cap used by deepseek (the
+    # default provider) and the other OpenAI-compatible endpoints;
+    # max_completion_tokens is the newer Responses-API spelling used by
+    # native OpenAI and openrouter. Both are forwarded so config can set
+    # either without the value being silently dropped here.
+    "max_tokens", "max_completion_tokens", "temperature", "top_p", "seed", "extra_body",
     "api_key", "callbacks", "http_client", "http_async_client",
 )
 

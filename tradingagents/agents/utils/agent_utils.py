@@ -47,6 +47,83 @@ def get_language_instruction() -> str:
     return f" Write your entire response in {lang}."
 
 
+# report_style has three values:
+#
+#   "detailed" — no length guidance at all (the default; byte-identical to
+#                the original prompts).
+#   "balanced" — the fast profile. Length discipline, but the two STRUCTURAL
+#                allowances that concise removed are restored.
+#   "concise"  — maximum trim. Retained and still tested, but no longer used
+#                by --fast; see below.
+#
+# Why "balanced" exists. On SIEMENS.NS 2026-08-12 the concise profile did not
+# merely shorten the write-up, it changed the conclusion: the news template's
+# "8 bullets MAXIMUM" cap evicted the 07-Apr-2025 Demerger filing in favour of
+# a fresher headline, and "No markdown table" deleted the one place the
+# detailed run tagged its rows "(separate entity)". With the disqualifying
+# fact gone, the run credited a demerged sister company's +70% profit to
+# SIEMENS.NS as a bullish point.
+#
+# So the fix is not mainly about word count — it is those two structural
+# allowances. "balanced" keeps the tables and raises the coverage-bullet cap,
+# and scales the word budgets by _BALANCED_WORD_SCALE on top.
+_BALANCED_WORD_SCALE = 2.5
+
+
+def get_report_style() -> str:
+    from tradingagents.dataflows.config import get_config
+    return get_config().get("report_style", "detailed")
+
+
+def is_length_limited() -> bool:
+    """True when the prompt should carry an explicit word budget."""
+    return get_report_style() in ("concise", "balanced")
+
+
+def keeps_markdown_tables() -> bool:
+    """Whether the summary table survives.
+
+    Only "concise" drops it. The table is compact for what it carries and is
+    where per-item qualifiers (entity, recency, confidence) actually live.
+    """
+    return get_report_style() != "concise"
+
+
+def scale_word_budget(concise_words: int) -> int:
+    """Scale a concise-tuned word budget for the active style."""
+    if get_report_style() == "balanced":
+        return int(concise_words * _BALANCED_WORD_SCALE)
+    return concise_words
+
+
+def get_brevity_instruction(max_words: int) -> str:
+    """Return a hard length limit for free-text agents when length is limited.
+
+    Returns "" for the default "detailed" style, so no extra tokens are used
+    and existing behaviour is byte-identical.
+
+    An explicit NUMBER matters: the word "concise" alone is a soft hint that
+    models routinely ignore, especially when a surrounding prompt also asks
+    for comprehensive analysis and a markdown table. Wall-clock time for a
+    run is dominated by output-token generation, so the word budget here is
+    the main quality/speed dial for the five free-text debate agents
+    (bull, bear, aggressive, neutral, conservative) — none of which had any
+    length guidance at all before, and which together are 5 of the ~12 LLM
+    calls in a run.
+    """
+    if not is_length_limited():
+        return ""
+    budget = scale_word_budget(max_words)
+    # "No markdown tables" is deliberately dropped under balanced — a debate
+    # agent that wants to tabulate a comparison should be allowed to.
+    table_clause = "" if keeps_markdown_tables() else " No markdown tables."
+    return (
+        f" HARD LIMIT: {budget} words maximum. Lead with your conclusion, "
+        "then only the evidence that actually supports it. No preamble, no "
+        "recap of what other analysts said." + table_clause
+    )
+
+
 def get_india_market_instruction(scope: str = "general") -> str:
     """Return a compact India-market lens for prompts.
 
@@ -306,7 +383,14 @@ def get_instrument_context_from_state(state: Mapping[str, Any]) -> str:
     )
 
 
-def create_msg_delete():
+def create_msg_delete(messages_key: str = "messages"):
+    """Clear one analyst's message channel.
+
+    ``messages_key`` exists because each analyst now owns a separate channel
+    (see AgentState) so the four can run concurrently; clearing the shared
+    ``messages`` channel would leave every analyst's own channel untouched
+    and wipe an unrelated one.
+    """
     def delete_messages(state):
         """Clear messages and add a context-anchored placeholder.
 
@@ -317,7 +401,7 @@ def create_msg_delete():
         date keeps the next analyst on-task even if the provider treats the
         placeholder as a standalone request.
         """
-        messages = state["messages"]
+        messages = state[messages_key]
         removal_operations = [RemoveMessage(id=m.id) for m in messages]
 
         instrument_context = get_instrument_context_from_state(state)
@@ -328,7 +412,7 @@ def create_msg_delete():
                 f"{instrument_context} The analysis date is {trade_date}."
             )
         )
-        return {"messages": removal_operations + [placeholder]}
+        return {messages_key: removal_operations + [placeholder]}
 
     return delete_messages
 

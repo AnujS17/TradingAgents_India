@@ -1,4 +1,5 @@
 from tradingagents.agents.utils.agent_utils import (
+    get_brevity_instruction,
     get_instrument_context_from_state,
     get_language_instruction,
     get_india_market_instruction,
@@ -19,7 +20,10 @@ def create_conservative_debator(llm):
         sentiment_report = state["sentiment_report"]
         # news_synthesis, not the full news_report — see bull_researcher.py.
         news_report = state["news_synthesis"]
-        fundamentals_report = state["fundamentals_report"]
+        # fundamentals_synthesis, not the full fundamentals_report — same
+        # reason as news_synthesis above: the report now carries all six
+        # annual+quarterly statement blocks.
+        fundamentals_report = state["fundamentals_synthesis"]
         instrument_context = get_instrument_context_from_state(state)
 
         # Static across the whole risk debate — see aggressive_debator.py.
@@ -43,7 +47,7 @@ Company Fundamentals Report: {fundamentals_report}
 
         dynamic_context = f"""Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Engage by questioning their optimism and emphasizing the potential downsides they may have overlooked. Address each of their counterpoints to showcase why a conservative stance is ultimately the safest path for the firm's assets. Focus on debating and critiquing their arguments to demonstrate the strength of a low-risk strategy over their approaches. Output conversationally as if you are speaking without any special formatting.""" + get_india_market_instruction("conservative_risk") + get_language_instruction()
+Engage by questioning their optimism and emphasizing the potential downsides they may have overlooked. Address each of their counterpoints to showcase why a conservative stance is ultimately the safest path for the firm's assets. Focus on debating and critiquing their arguments to demonstrate the strength of a low-risk strategy over their approaches. Output conversationally as if you are speaking without any special formatting.""" + get_india_market_instruction("conservative_risk") + get_brevity_instruction(180) + get_language_instruction()
 
         response = invoke_with_cache_breakpoint(llm, static_context, dynamic_context)
 

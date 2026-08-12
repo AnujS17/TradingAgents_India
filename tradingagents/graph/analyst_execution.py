@@ -10,6 +10,9 @@ class AnalystNodeSpec:
     clear_node: str
     tool_node: str
     report_key: str
+    # Per-analyst message channel. Parallel analysts must not share one
+    # ``messages`` channel — see AgentState for why that breaks ReAct routing.
+    messages_key: str
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         clear_node="Msg Clear Market",
         tool_node="tools_market",
         report_key="market_report",
+        messages_key="market_messages",
     ),
     "social": AnalystNodeSpec(
         # Wire key stays "social" for saved-config back-compat; the
@@ -36,6 +40,7 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         clear_node="Msg Clear Sentiment",
         tool_node="tools_social",
         report_key="sentiment_report",
+        messages_key="sentiment_messages",
     ),
     "news": AnalystNodeSpec(
         key="news",
@@ -43,6 +48,7 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         clear_node="Msg Clear News",
         tool_node="tools_news",
         report_key="news_report",
+        messages_key="news_messages",
     ),
     "fundamentals": AnalystNodeSpec(
         key="fundamentals",
@@ -50,6 +56,7 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         clear_node="Msg Clear Fundamentals",
         tool_node="tools_fundamentals",
         report_key="fundamentals_report",
+        messages_key="fundamentals_messages",
     ),
 }
 
@@ -78,6 +85,16 @@ def get_initial_analyst_node(plan: AnalystExecutionPlan) -> str:
     return plan.specs[0].agent_node
 
 
+def get_message_stream_channels(plan: AnalystExecutionPlan) -> List[str]:
+    """Every state channel a streamed chunk can carry agent messages on.
+
+    The shared ``messages`` channel still carries the debate/trader/risk
+    nodes, but each analyst writes only to its own channel, so a consumer
+    that reads ``messages`` alone sees no analyst activity at all.
+    """
+    return ["messages"] + [spec.messages_key for spec in plan.specs]
+
+
 class AnalystWallTimeTracker:
     def __init__(self, plan: AnalystExecutionPlan):
         self.plan = plan
@@ -88,6 +105,17 @@ class AnalystWallTimeTracker:
         if analyst_key not in ANALYST_NODE_SPECS:
             raise ValueError(f"unknown analyst key: {analyst_key}")
         self._started_at.setdefault(analyst_key, monotonic() if started_at is None else started_at)
+
+    def mark_launched(self, started_at: Optional[float] = None) -> None:
+        """Record the start of every analyst that begins running immediately.
+
+        Under parallel fan-out all analysts launch in the same superstep, so
+        every one of them is already running before the first chunk arrives.
+        Sequentially only the first analyst has started.
+        """
+        launched = self.plan.specs if self.plan.concurrency_limit > 1 else self.plan.specs[:1]
+        for spec in launched:
+            self.mark_started(spec.key, started_at=started_at)
 
     def mark_completed(
         self,
@@ -125,6 +153,7 @@ def sync_analyst_tracker_from_chunk(
     now: Optional[float] = None,
 ) -> None:
     current_time = monotonic() if now is None else now
+    parallel = tracker.plan.concurrency_limit > 1
     active_found = False
 
     for spec in tracker.plan.specs:
@@ -135,6 +164,10 @@ def sync_analyst_tracker_from_chunk(
             tracker.mark_completed(spec.key, completed_at=current_time)
             continue
 
-        if not active_found:
+        # Under parallel fan-out every analyst without a report is still
+        # running, not queued behind the one ahead of it. Marking only the
+        # first would leave the rest unstarted until they report, and
+        # mark_completed would then measure a zero-length interval.
+        if parallel or not active_found:
             tracker.mark_started(spec.key, started_at=current_time)
             active_found = True

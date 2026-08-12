@@ -5,6 +5,9 @@ from tradingagents.agents.utils.agent_utils import (
     get_stock_data,
     get_india_market_instruction,
     get_verified_market_snapshot,
+    is_length_limited,
+    keeps_markdown_tables,
+    scale_word_budget,
 )
 from tradingagents.dataflows.config import get_config
 
@@ -37,6 +40,29 @@ def create_market_analyst(llm):
         tools = [
             get_stock_data,
         ]
+
+        # "concise" (fast platform profile) requests a shorter write-up —
+        # see default_config.get_fast_config for why. The evidence/citation
+        # discipline two paragraphs below is unconditional either way.
+        concise = is_length_limited()
+        # An explicit word count, not the word "concise" — models reliably
+        # ignore the latter. Measured: the detailed prompt produced ~2,100
+        # words of market commentary, which at typical generation speed is
+        # over a minute of wall-clock for this one call alone.
+        depth_instruction = (
+            f"HARD LIMIT: {scale_word_budget(250)} words maximum. Lead with the trend verdict, then only the "
+            "indicator readings that justify it. No preamble, no restating the snapshot "
+            "back, no per-indicator walkthrough."
+            if concise
+            else "Write a very detailed and nuanced report of the trends you observe."
+        )
+        # Markdown tables are disproportionately token-expensive (row
+        # scaffolding, padding, repeated headers) for the information they
+        # add over prose at this length.
+        table_instruction = (
+            "" if concise
+            else """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+        )
 
         system_message = (
             f"""You are a trading assistant tasked with analyzing financial markets. Every indicator below is already computed and included in the verified market snapshot — do not call a tool to re-fetch any of them. Select the **most relevant indicators** from what's provided for a given market condition or trading strategy, choosing up to **8** that provide complementary insights without redundancy. Categories and each category's indicators are:
@@ -71,9 +97,9 @@ The verified market snapshot below has already been fetched before you were invo
 {verified_snapshot}
 </verified_market_snapshot>
 
-Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
+{depth_instruction} Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + get_india_market_instruction("market")
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+            + table_instruction
             + get_language_instruction()
         )
 
@@ -101,7 +127,7 @@ Write a very detailed and nuanced report of the trends you observe. Provide spec
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(state["market_messages"])
 
         report = ""
 
@@ -114,7 +140,7 @@ Write a very detailed and nuanced report of the trends you observe. Provide spec
             )
 
         update = {
-            "messages": [result],
+            "market_messages": [result],
             "market_report": report,
         }
 
@@ -125,7 +151,7 @@ Write a very detailed and nuanced report of the trends you observe. Provide spec
         # so it isn't re-logged into message_tool.log on every subsequent turn.
         already_ran = any(
             getattr(m, "name", None) == "get_stock_data"
-            for m in state["messages"]
+            for m in state["market_messages"]
         )
         if not already_ran:
             update["audit_tool_calls"] = [

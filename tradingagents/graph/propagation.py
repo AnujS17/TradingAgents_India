@@ -38,6 +38,14 @@ class Propagator:
         identity = resolve_instrument_identity(resolved_ticker)
         return {
             "messages": [("human", company_name)],
+            # Every analyst reads its OWN channel now (see AgentState), so
+            # each needs the same seed message the shared channel used to
+            # provide — an unseeded channel would make the analyst invoke
+            # with an empty message list.
+            "market_messages": [("human", company_name)],
+            "sentiment_messages": [("human", company_name)],
+            "news_messages": [("human", company_name)],
+            "fundamentals_messages": [("human", company_name)],
             "company_of_interest": resolved_ticker,
             "asset_type": asset_type,
             "instrument_context": build_instrument_context(
@@ -73,6 +81,7 @@ class Propagator:
             ),
             "market_report": "",
             "fundamentals_report": "",
+            "fundamentals_synthesis": "",
             "sentiment_report": "",
             "news_report": "",
             "news_synthesis": "",

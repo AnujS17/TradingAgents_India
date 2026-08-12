@@ -71,7 +71,9 @@ class GraphSetup:
         # Add analyst nodes to the graph
         for spec in plan.specs:
             workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
-            workflow.add_node(spec.clear_node, create_msg_delete())
+            # Each analyst clears its OWN channel — see AgentState for why the
+            # four no longer share one ``messages`` channel.
+            workflow.add_node(spec.clear_node, create_msg_delete(spec.messages_key))
             workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
 
         # Add other nodes
@@ -84,11 +86,26 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
-        # Define edges
-        # Start with the first analyst
-        workflow.add_edge(START, plan.specs[0].agent_node)
+        # Define edges.
+        #
+        # concurrency_limit > 1 fans the analysts out to run concurrently;
+        # 1 (the default) keeps the original strict chain. The value was
+        # previously threaded all the way from config through
+        # build_analyst_execution_plan and then never read here, so analysts
+        # always ran sequentially no matter what it was set to.
+        #
+        # Running them together is safe because they are genuinely
+        # independent — each needs only the ticker and date, none reads
+        # another's report — and because each now owns a separate message
+        # channel (see AgentState) so their ReAct loops cannot interleave.
+        parallel = plan.concurrency_limit > 1
 
-        # Connect analysts in sequence
+        if parallel:
+            for spec in plan.specs:
+                workflow.add_edge(START, spec.agent_node)
+        else:
+            workflow.add_edge(START, plan.specs[0].agent_node)
+
         for i, spec in enumerate(plan.specs):
             current_analyst = spec.agent_node
             current_tools = spec.tool_node
@@ -102,11 +119,29 @@ class GraphSetup:
             )
             workflow.add_edge(current_tools, current_analyst)
 
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
-            if i < len(plan.specs) - 1:
+            if parallel:
+                pass  # fan-in handled once, after this loop
+            elif i < len(plan.specs) - 1:
                 workflow.add_edge(current_clear, plan.specs[i + 1].agent_node)
             else:
                 workflow.add_edge(current_clear, "Bull Researcher")
+
+        if parallel:
+            # ONE multi-source edge, not N individual edges. This distinction
+            # is the whole barrier: N separate add_edge(clear, "Bull
+            # Researcher") calls make each analyst independently *trigger*
+            # Bull Researcher, so a slow analyst (market and fundamentals run
+            # extra ReAct rounds for their tool calls) re-triggers it in a
+            # later superstep while the bull/bear debate loop is already
+            # running. Two nodes then write investment_debate_state in one
+            # step and LangGraph raises
+            # InvalidUpdateError: "Can receive only one value per step".
+            # The list form makes Bull Researcher wait for ALL of them and
+            # run exactly once. (Observed live, not theoretically: the
+            # per-edge version passed tests whose stub analysts all happened
+            # to finish in the same superstep, and only failed against real
+            # analysts with differing round counts.)
+            workflow.add_edge([spec.clear_node for spec in plan.specs], "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(

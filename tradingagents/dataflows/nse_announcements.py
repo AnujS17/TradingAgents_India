@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+
+from tradingagents.dataflows.snapshot_cache import snapshot_cached
 from typing import Optional
 
 import requests
@@ -66,6 +68,7 @@ def fetch_corporate_announcements(ticker: str, curr_date: str, limit: Optional[i
 
 
 @lru_cache(maxsize=64)
+@snapshot_cached("nse_filings")
 def _fetch_cached(symbol: str, curr_date: str, limit: int, timeout: float) -> str:
     if not symbol:
         return "<no NSE symbol resolved for corporate announcements>"

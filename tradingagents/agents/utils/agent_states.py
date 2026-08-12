@@ -1,7 +1,9 @@
+import operator
 from typing import Annotated
 from typing import Any
 from typing_extensions import TypedDict
 from langgraph.graph import MessagesState
+from langgraph.graph.message import add_messages
 
 
 # Researcher team state
@@ -66,6 +68,14 @@ class AgentState(MessagesState):
         "which stays the full raw+analysis version saved to disk for the human record.",
     ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
+    fundamentals_synthesis: Annotated[
+        str,
+        "The fundamentals analysis text alone, with none of the pre-fetched "
+        "statement blocks. Same split as news_synthesis and for the same reason: "
+        "fundamentals_report now carries the full annual+quarterly income "
+        "statement, balance sheet and cash flow, which is far too large to "
+        "re-embed into all 5 debate/risk prompts on every round.",
+    ]
 
     # researcher team discussion step
     investment_debate_state: Annotated[
@@ -81,4 +91,33 @@ class AgentState(MessagesState):
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]
-    audit_tool_calls: Annotated[list[dict[str, Any]], "Deterministic prefetch calls to write into message_tool.log"]
+    # operator.add, not a description string. LangGraph only treats
+    # Annotated[T, x] as having a reducer when x is CALLABLE; a plain
+    # docstring means "last write wins", and two branches writing the same
+    # key in one superstep then raise InvalidUpdateError. With the four
+    # analysts running in parallel they all append here at once, so this
+    # reducer is what makes concurrent audit logging legal rather than a
+    # crash. (The human-readable description moved to the comment above so
+    # no documentation is lost.)
+    audit_tool_calls: Annotated[list[dict[str, Any]], operator.add]
+
+    # Per-analyst message channels — the core enabler for running the four
+    # analysts concurrently.
+    #
+    # All four used to share the single inherited ``messages`` channel. That
+    # is safe strictly sequentially, but under parallel execution it breaks
+    # correctness rather than just being untidy: every ReAct routing decision
+    # reads ``messages[-1]`` (see ConditionalLogic.should_continue_*), and in
+    # a parallel superstep the four analysts' outputs are merged by
+    # add_messages in nondeterministic order. should_continue_news could then
+    # read the MARKET analyst's tool-call message and route the news branch
+    # into tools_news, executing the wrong tools against the wrong agent's
+    # state. Giving each analyst its own channel makes each branch's ReAct
+    # loop read only its own last message.
+    #
+    # add_messages (not operator.add) so a tool node appending a ToolMessage
+    # merges by id the same way the shared channel always did.
+    market_messages: Annotated[list, add_messages]
+    sentiment_messages: Annotated[list, add_messages]
+    news_messages: Annotated[list, add_messages]
+    fundamentals_messages: Annotated[list, add_messages]

@@ -18,10 +18,11 @@ so that:
 
 from __future__ import annotations
 
+import copy
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -124,18 +125,84 @@ class TraderProposal(BaseModel):
             "the research plan. Two to four sentences."
         ),
     )
+    # These two descriptions ARE the model's only instruction for these
+    # fields — trader.py's prompt says nothing about levels at all. The
+    # earlier wording ("Optional entry price target in the instrument's quote
+    # currency") stated no relationship between them and gave no guidance on
+    # when omitting is correct, which produced two malformed pairs across
+    # observed runs, in BOTH report styles:
+    #   SIEMENS.NS 2026-08-12 fast,     Hold: entry 3700.0, stop 3700.0 (identical)
+    #   SIEMENS.NS 2026-08-11 detailed, Hold: entry 3650.0, stop 3736.0 (stop above entry)
+    # Both were Holds, where "entry price" has no natural answer and the model
+    # back-filled a number from the prose. Saying "Optional" was not enough;
+    # it has to say when None is the RIGHT answer.
+    #
+    # THE BOOK IS LONG-ONLY. There is no shorting anywhere in this codebase,
+    # and Sell means "reduce or exit a long", not "open a short" — see the
+    # Underweight/Sell wording on PortfolioRating and every observed run
+    # ("Reduce SIEMENS.NS into strength near Rs 4,000 ... stop below Rs
+    # 3,800"). So the protective stop guards a LONG in every case and belongs
+    # BELOW entry for all three actions, including Sell. An earlier version of
+    # this rule required stop > entry for Sell, which would have discarded the
+    # correct pair entry 3900.0 / stop 3650.0 as malformed.
     entry_price: Optional[float] = Field(
         default=None,
-        description="Optional entry price target in the instrument's quote currency.",
+        description=(
+            "Entry or execution price target in the instrument's quote "
+            "currency — the level at which the action is meant to happen "
+            "(the level to buy at, or the level to trim into). Omit it "
+            "(null) when the action is Hold with nothing being executed, or "
+            "when you are not proposing a specific level: a Hold that says "
+            "'wait for a pullback' should leave this null rather than quote "
+            "the level you are waiting for. Never invent a number to fill "
+            "the field."
+        ),
     )
     stop_loss: Optional[float] = Field(
         default=None,
-        description="Optional stop-loss price in the instrument's quote currency.",
+        description=(
+            "Protective stop price in the instrument's quote currency, for "
+            "the long position being opened or retained. This book is "
+            "long-only, so the stop MUST be strictly BELOW entry_price for "
+            "every action — including Sell, where it protects the portion of "
+            "the position you are keeping, not the portion you are trimming. "
+            "It must never equal entry_price: a stop at the entry is not a "
+            "stop. Omit it (null) whenever you omit entry_price, when the "
+            "action is a full exit, or when no protective level follows from "
+            "the analysis."
+        ),
     )
     position_sizing: Optional[str] = Field(
         default=None,
         description="Optional sizing guidance, e.g. '5% of portfolio'.",
     )
+
+    @model_validator(mode="after")
+    def _drop_incoherent_levels(self) -> "TraderProposal":
+        """Discard an entry/stop pair that contradicts the action.
+
+        Deliberately normalises instead of raising. A ValidationError here
+        fails the structured-output parse, which triggers the fallback path
+        and costs a SECOND full LLM call — the exact "truncated JSON makes
+        runs slower, not faster" trap documented in PERF_HANDOFF.md. Worse,
+        printing "Stop Loss: 3700.0" under "Entry Price: 3700.0" is an
+        actively harmful number in a trading report: a reader may size a
+        position against a stop that offers no protection. Dropping the bad
+        value is both cheaper and safer than either raising or emitting it.
+
+        Only the stop is dropped; the entry is left alone, since between the
+        two it is the stop whose validity is checkable.
+
+        The rule is the same for all three actions because the book is
+        long-only (see the field comments above): the stop always guards a
+        long, so it always belongs below the execution level.
+        """
+        if self.entry_price is None or self.stop_loss is None:
+            return self
+
+        if self.stop_loss >= self.entry_price:
+            self.stop_loss = None
+        return self
 
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
@@ -299,6 +366,80 @@ class SentimentReport(BaseModel):
             "direction, source, and supporting evidence."
         ),
     )
+
+
+def concise_variant(model: type[BaseModel], overrides: dict[str, str]) -> type[BaseModel]:
+    """Return a copy of ``model`` with some field descriptions replaced.
+
+    For structured-output agents the field descriptions ARE the model's
+    output instructions — langchain sends the JSON schema, so a schema that
+    says "Full sentiment report covering, in order: (1)...(5) a markdown
+    table" produces a long report no matter how concise the surrounding
+    prompt asks it to be. Trimming only the prompt (as an earlier pass did)
+    left these agents unchanged, which is why sentiment/manager/trader/PM
+    output did not shrink. Rebuilding the model with shorter descriptions is
+    what actually reaches the API.
+
+    Field types, validators and constraints are preserved exactly; only the
+    human-readable description text differs, so the parsed result is
+    identical in shape and every downstream renderer keeps working.
+    """
+    rebuilt = create_model(f"Concise{model.__name__}", __base__=model)
+    for name, description in overrides.items():
+        if name not in rebuilt.model_fields:
+            raise KeyError(f"{model.__name__} has no field {name!r} to override")
+        # deepcopy first: create_model(__base__=...) leaves the subclass's
+        # model_fields pointing at the SAME FieldInfo objects as the parent,
+        # so mutating in place would rewrite the original schema too and the
+        # "detailed" path would silently inherit the concise descriptions.
+        field = copy.deepcopy(rebuilt.model_fields[name])
+        field.description = description
+        rebuilt.model_fields[name] = field
+    rebuilt.model_rebuild(force=True)
+    return rebuilt
+
+
+CONCISE_SENTIMENT_OVERRIDES = {
+    "narrative": (
+        "SHORT sentiment read, 150 words MAXIMUM. One line per source that "
+        "actually has data (skip silent sources entirely), then one line on "
+        "any real cross-source divergence. No markdown table. No catalyst or "
+        "risk section. Prose only, no headings."
+    ),
+}
+
+CONCISE_RESEARCH_PLAN_OVERRIDES = {
+    "rationale": (
+        "80 words MAXIMUM. The single strongest argument from each side, then "
+        "which one won and why. No preamble."
+    ),
+    "strategic_actions": (
+        "60 words MAXIMUM. Concrete steps only — entry approach and position "
+        "sizing. No hedging language, no restating the rationale."
+    ),
+}
+
+# Note: TraderProposal.reasoning and PortfolioDecision.executive_summary
+# already carried "Two to four sentences" limits, so these overrides are a
+# modest tightening (~50 words) rather than the large win the uncapped
+# fields below give. Kept for consistency of the concise profile, not
+# because they were the problem.
+CONCISE_TRADER_OVERRIDES = {
+    "reasoning": (
+        "50 words MAXIMUM. The evidence that decided it. No restating reports."
+    ),
+}
+
+CONCISE_PORTFOLIO_OVERRIDES = {
+    "executive_summary": (
+        "50 words MAXIMUM. The action, the level, the risk bound. Nothing else."
+    ),
+    "investment_thesis": (
+        "120 words MAXIMUM. The decisive evidence and the main counter-argument "
+        "you are accepting the risk of. Do not re-summarise every analyst; "
+        "cite only what changed the decision."
+    ),
+}
 
 
 def render_sentiment_report(report: SentimentReport) -> str:

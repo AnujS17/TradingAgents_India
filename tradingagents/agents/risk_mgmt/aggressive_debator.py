@@ -1,4 +1,5 @@
 from tradingagents.agents.utils.agent_utils import (
+    get_brevity_instruction,
     get_instrument_context_from_state,
     get_language_instruction,
     get_india_market_instruction,
@@ -19,7 +20,10 @@ def create_aggressive_debator(llm):
         sentiment_report = state["sentiment_report"]
         # news_synthesis, not the full news_report — see bull_researcher.py.
         news_report = state["news_synthesis"]
-        fundamentals_report = state["fundamentals_report"]
+        # fundamentals_synthesis, not the full fundamentals_report — same
+        # reason as news_synthesis above: the report now carries all six
+        # annual+quarterly statement blocks.
+        fundamentals_report = state["fundamentals_synthesis"]
         instrument_context = get_instrument_context_from_state(state)
 
         # The trader only runs once before the risk debate starts, so its
@@ -46,7 +50,7 @@ Company Fundamentals Report: {fundamentals_report}
 
         dynamic_context = f"""Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.""" + get_india_market_instruction("aggressive_risk") + get_language_instruction()
+Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.""" + get_india_market_instruction("aggressive_risk") + get_brevity_instruction(180) + get_language_instruction()
 
         response = invoke_with_cache_breakpoint(llm, static_context, dynamic_context)
 

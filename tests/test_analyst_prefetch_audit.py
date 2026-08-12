@@ -24,6 +24,12 @@ class ToolBindingLLM(PlainLLM):
 def _state():
     return {
         "messages": [("human", "ORCL")],
+        # Each analyst reads its OWN channel now (parallel execution);
+        # seeding only "messages" leaves them empty -> KeyError.
+        "market_messages": [("human", "ORCL")],
+        "sentiment_messages": [("human", "ORCL")],
+        "news_messages": [("human", "ORCL")],
+        "fundamentals_messages": [("human", "ORCL")],
         "company_of_interest": "ORCL",
         "trade_date": "2026-06-03",
         "asset_type": "stock",
@@ -128,7 +134,7 @@ def test_sentiment_prefetches_are_returned_as_audit_tool_calls(monkeypatch):
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_reddit_posts",
-        lambda ticker: "reddit block",
+        lambda ticker, subreddits=None: "reddit block",
     )
     monkeypatch.setattr(
         "tradingagents.agents.analysts.sentiment_analyst.fetch_ticker_india_news",
@@ -149,40 +155,117 @@ def test_sentiment_prefetches_are_returned_as_audit_tool_calls(monkeypatch):
     assert result["audit_tool_calls"][3]["result"] == "india news block"
 
 
-def test_fundamentals_bulk_deals_prefetch_is_returned_as_audit_tool_call(monkeypatch):
+def _stub_fundamentals(monkeypatch, calls=None):
+    def record(name, freq=None):
+        if calls is not None:
+            calls.append((name, freq))
+
     monkeypatch.setattr(
         "tradingagents.agents.analysts.fundamentals_analyst.fetch_promoter_bulk_deals",
-        lambda ticker, curr_date: "## NSE Bulk-Deal Activity for ORCL\n- BUY: SOME FUND — qty 100000 @ avg price 50.00",
+        lambda ticker, curr_date: (
+            record("fetch_promoter_bulk_deals"),
+            "## NSE Bulk-Deal Activity for ORCL\n- BUY: SOME FUND — qty 100000 @ avg price 50.00",
+        )[1],
     )
+    monkeypatch.setattr(
+        "tradingagents.agents.analysts.fundamentals_analyst.get_fundamentals.func",
+        lambda ticker, curr_date: (record("get_fundamentals"), "overview block")[1],
+    )
+    for tool in ("get_income_statement", "get_balance_sheet", "get_cashflow"):
+        monkeypatch.setattr(
+            f"tradingagents.agents.analysts.fundamentals_analyst.{tool}.func",
+            lambda ticker, freq, curr_date, _t=tool: (
+                record(_t, freq),
+                f"{_t} {freq} block",
+            )[1],
+        )
 
-    result = create_fundamentals_analyst(ToolBindingLLM())(_state())
 
-    assert result["audit_tool_calls"] == [
-        {
-            "name": "fetch_promoter_bulk_deals",
-            "args": {"ticker": "ORCL", "curr_date": "2026-06-03"},
-            "result": "## NSE Bulk-Deal Activity for ORCL\n- BUY: SOME FUND — qty 100000 @ avg price 50.00",
-        }
-    ]
+def test_fundamentals_prefetches_every_statement_in_both_frequencies(monkeypatch):
+    """The whole point of the pre-fetch: no statement/frequency can be skipped.
 
-
-def test_fundamentals_bulk_deals_audit_entry_not_repeated_across_react_turns(monkeypatch):
-    """Regression test: this node re-runs on every ReAct tool-call round-trip
-    (same mechanism market_analyst.py had a duplicate-logging bug from earlier
-    this session). The audit entry must only appear on the first turn.
+    Regression for the defect measured on SIEMENS.NS 2026-08-12. The statement
+    tools default to freq="quarterly"; as a ReAct agent this analyst never
+    passed the argument, so it fetched quarterly only and never saw an annual
+    statement — losing the multi-year growth, margin and free-cash-flow series
+    the detailed run used. Same cause as HDFCBANK.NS's "No cash-flow statement
+    data available" (that vendor has no quarterly cash flow; annual was fine).
     """
+    calls = []
+    _stub_fundamentals(monkeypatch, calls)
+
+    result = create_fundamentals_analyst(PlainLLM())(_state())
+
+    assert set(calls) == {
+        ("fetch_promoter_bulk_deals", None),
+        ("get_fundamentals", None),
+        ("get_income_statement", "annual"),
+        ("get_income_statement", "quarterly"),
+        ("get_balance_sheet", "annual"),
+        ("get_balance_sheet", "quarterly"),
+        ("get_cashflow", "annual"),
+        ("get_cashflow", "quarterly"),
+    }
+    assert len(calls) == 8, "each block must be fetched exactly once"
+
+    # Every block reaches the model, and every block is auditable.
+    assert [call["name"] for call in result["audit_tool_calls"]] == [
+        "fetch_promoter_bulk_deals",
+        "get_fundamentals",
+        "get_income_statement",
+        "get_income_statement",
+        "get_balance_sheet",
+        "get_balance_sheet",
+        "get_cashflow",
+        "get_cashflow",
+    ]
+    assert {
+        call["args"].get("freq")
+        for call in result["audit_tool_calls"]
+        if call["name"] == "get_cashflow"
+    } == {"annual", "quarterly"}
+
+
+def test_fundamentals_report_carries_raw_blocks_but_synthesis_does_not(monkeypatch):
+    """Same split as news_report/news_synthesis, and for the same reason.
+
+    The report keeps the raw blocks for the human record and hallucination
+    audits; the synthesis is what the 5 debate/risk nodes read, so six
+    statement blocks are not re-embedded into every one of their prompts.
+    """
+    _stub_fundamentals(monkeypatch)
+
+    result = create_fundamentals_analyst(PlainLLM())(_state())
+
+    for marker in (
+        "get_cashflow annual block",
+        "get_cashflow quarterly block",
+        "get_income_statement annual block",
+        "get_balance_sheet annual block",
+        "overview block",
+    ):
+        assert marker in result["fundamentals_report"]
+
+    assert result["fundamentals_synthesis"] == "grounded report"
+    assert "get_cashflow annual block" not in result["fundamentals_synthesis"]
+    assert result["fundamentals_messages"][0].content == "grounded report"
+
+
+def test_fundamentals_degrades_when_a_block_fails(monkeypatch):
+    """A dead vendor endpoint must not abort the run — and the model must be
+    told the block is missing rather than silently reasoning without it."""
+    _stub_fundamentals(monkeypatch)
+
+    def boom(ticker, freq, curr_date):
+        raise RuntimeError("vendor 503")
+
     monkeypatch.setattr(
-        "tradingagents.agents.analysts.fundamentals_analyst.fetch_promoter_bulk_deals",
-        lambda ticker, curr_date: "bulk deal block",
+        "tradingagents.agents.analysts.fundamentals_analyst.get_cashflow.func", boom
     )
 
-    state = _state()
-    result_turn1 = create_fundamentals_analyst(ToolBindingLLM())(state)
-    assert len(result_turn1["audit_tool_calls"]) == 1
+    result = create_fundamentals_analyst(PlainLLM())(_state())
 
-    state_turn2 = dict(state)
-    state_turn2["messages"] = state["messages"] + [
-        ToolMessage(content="fundamentals csv", name="get_fundamentals", tool_call_id="1")
-    ]
-    result_turn2 = create_fundamentals_analyst(ToolBindingLLM())(state_turn2)
-    assert "audit_tool_calls" not in result_turn2
+    assert "get_cashflow(annual) unavailable: vendor 503" in result["fundamentals_report"]
+    assert "get_cashflow(quarterly) unavailable: vendor 503" in result["fundamentals_report"]
+    # The other seven still made it through.
+    assert "overview block" in result["fundamentals_report"]

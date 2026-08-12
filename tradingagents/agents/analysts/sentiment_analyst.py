@@ -32,7 +32,12 @@ from datetime import datetime, timedelta
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
+from tradingagents.agents.schemas import (
+    CONCISE_SENTIMENT_OVERRIDES,
+    SentimentReport,
+    concise_variant,
+    render_sentiment_report,
+)
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
@@ -44,7 +49,7 @@ from tradingagents.agents.utils.structured import (
     invoke_structured_or_freetext,
 )
 from tradingagents.dataflows.config import get_config
-from tradingagents.dataflows.reddit import fetch_reddit_posts
+from tradingagents.dataflows.reddit import DEFAULT_SUBREDDITS, fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
 from tradingagents.dataflows.india_news import fetch_ticker_india_news
 
@@ -76,20 +81,36 @@ def create_sentiment_analyst(llm):
     report via structured output (with a free-text fallback for providers
     that do not support it).
     """
-    structured_llm = bind_structured(llm, SentimentReport, "Sentiment Analyst")
+    # The schema's field descriptions are what langchain actually sends to
+    # the provider as output instructions, so a concise PROMPT alone left
+    # this agent writing the full 5-section report the schema still asked
+    # for. Bind the concise schema variant instead when report_style says so.
+    _schema = (
+        concise_variant(SentimentReport, CONCISE_SENTIMENT_OVERRIDES)
+        if get_config().get("report_style", "detailed") == "concise"
+        else SentimentReport
+    )
+    structured_llm = bind_structured(llm, _schema, "Sentiment Analyst")
 
     def sentiment_analyst_node(state):
         ticker = state["company_of_interest"]
         end_date = state["trade_date"]
         start_date = _news_window_start(end_date)
         instrument_context = get_instrument_context_from_state(state)
+        config = get_config()
 
         # Pre-fetch all four sources. Each fetcher degrades gracefully and
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
         stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
+        # None (the default) means "use every subreddit"; the fast profile
+        # narrows this to the top 3 by subscriber count (see
+        # default_config.get_fast_config) to cut Reddit's worst-case fetch
+        # time — subreddit count is the direct multiplier, since every miss
+        # still queries every configured subreddit.
+        reddit_subreddits = tuple(config.get("reddit_subreddits") or DEFAULT_SUBREDDITS)
+        reddit_block = fetch_reddit_posts(ticker, subreddits=reddit_subreddits)
         india_news_block = fetch_ticker_india_news(ticker)
 
         system_message = _build_system_message(
@@ -100,6 +121,8 @@ def create_sentiment_analyst(llm):
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
             india_news_block=india_news_block,
+            reddit_subreddits=reddit_subreddits,
+            report_style=config.get("report_style", "detailed"),
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -123,7 +146,7 @@ def create_sentiment_analyst(llm):
         # Format the template into a concrete message list so the structured
         # and free-text paths receive the same input. No bind_tools — the
         # data is already in the prompt.
-        formatted_messages = prompt.format_messages(messages=state["messages"])
+        formatted_messages = prompt.format_messages(messages=state["sentiment_messages"])
 
         analysis_text = invoke_structured_or_freetext(
             structured_llm,
@@ -164,7 +187,7 @@ def create_sentiment_analyst(llm):
             # (fundamentals_analyst), inflating tokens on every one of
             # its ReAct turns. The full report still reaches the saved
             # report via sentiment_report.
-            "messages": [AIMessage(content=analysis_text)],
+            "sentiment_messages": [AIMessage(content=analysis_text)],
             "sentiment_report": report_text,
             "audit_tool_calls": [
                 {
@@ -213,9 +236,41 @@ def _build_system_message(
     stocktwits_block: str,
     reddit_block: str,
     india_news_block: str,
+    reddit_subreddits: tuple[str, ...],
+    report_style: str = "detailed",
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
-    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on four complementary data sources that have already been collected for you.
+    reddit_source_line = ", ".join(f"r/{s}" for s in reddit_subreddits)
+    # Built from the actual subreddit set, not hardcoded: with a narrowed
+    # list (fast profile) a static description would claim character notes
+    # about subreddits (r/NSEbets, r/DalalStreetTalks, ...) that were never
+    # queried in this run — a source-description error, not just verbosity.
+    _character_notes = {
+        "IndianStreetBets": "r/IndianStreetBets often contrarian/exuberant",
+        "NSEbets": "r/NSEbets often contrarian/exuberant",
+        "IndiaInvestments": "r/IndiaInvestments more measured/longer-term",
+        "IndianStockMarket": "r/IndianStockMarket general NSE/BSE discussion",
+        "StockMarketIndia": "r/StockMarketIndia general NSE/BSE discussion",
+    }
+    reddit_character_line = "; ".join(
+        _character_notes[s] for s in reddit_subreddits if s in _character_notes
+    )
+    concise = report_style == "concise"
+    task_line = (
+        "Your task is to produce a concise sentiment report"
+        if concise
+        else "Your task is to produce a comprehensive sentiment report"
+    )
+    narrative_field = (
+        "**narrative**: A concise source-by-source read (2-4 sentences per source that actually has data), "
+        "any real cross-source divergence, and a short markdown summary table (direction, source, supporting "
+        "evidence). Skip extended catalyst/risk elaboration — keep it tight; this is a fast-platform run, not "
+        "a research report."
+        if concise
+        else "**narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts "
+        "and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence)."
+    )
+    return f"""You are a financial market sentiment analyst. {task_line} for {ticker} covering the period from {start_date} to {end_date}, drawing on four complementary data sources that have already been collected for you.
 
 ## Data sources (pre-fetched, in this prompt)
 
@@ -234,7 +289,7 @@ Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish /
 <end_of_stocktwits>
 
 ### Reddit posts — India-market subreddits (past 7 days)
-Community discussion across r/IndianStockMarket, r/IndiaInvestments, r/IndianStreetBets, r/StockMarketIndia, r/IndianStocks, r/NSEbets and r/DalalStreetTalks. Engagement signal via upvote score and comment count. Subreddit character matters (r/IndianStreetBets and r/NSEbets are often contrarian/exuberant; r/IndiaInvestments more measured/longer-term; r/IndianStockMarket and r/StockMarketIndia general NSE/BSE discussion).
+Community discussion across {reddit_source_line}. Engagement signal via upvote score and comment count.{" Subreddit character matters: " + reddit_character_line + "." if reddit_character_line else ""}
 
 <start_of_reddit>
 {reddit_block}
@@ -272,7 +327,7 @@ Fill the following fields:
 - **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when sources point in clearly different directions; Neutral only when all sources are genuinely silent.
 - **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
 - **confidence**: low / medium / high, based on data quality and sample size.
-- **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
+- {narrative_field}
 
 Scope discipline: do not state that technical analysis, fundamentals, or market data are unavailable or available. Those are handled by other analysts. This report is limited to the pre-fetched sentiment/news/social sources above.
 {get_india_market_instruction("sentiment")}
