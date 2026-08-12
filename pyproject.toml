@@ -23,6 +23,9 @@ dependencies = [
     "questionary>=2.1.0",
     "praw>=7.8.1",
     "redis>=6.2.0",
+    "fastapi>=0.115.0",
+    "pydantic-settings>=2.5.0",
+    "uvicorn[standard]>=0.32.0",
     "requests>=2.32.4",
     "rich>=14.0.0",
     "typer>=0.21.0",
@@ -39,7 +42,7 @@ dependencies = [
 tradingagents = "cli.main:app"
 
 [tool.setuptools.packages.find]
-include = ["tradingagents*", "cli*"]
+include = ["tradingagents*", "cli*", "api*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
