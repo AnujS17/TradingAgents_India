@@ -230,3 +230,10 @@ run_test.py
 trading_git/
 .env/
 test1.py/
+
+# Locally installed skills (npx skills add) and their lockfile/symlinks
+.agents/
+skills-lock.json
+
+# Generated motion-audit reports (regenerate with the design-motion-principles skill)
+motion-audits/
