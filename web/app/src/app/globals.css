@@ -100,6 +100,37 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 .u-ticker-track { display: flex; width: max-content; animation: tickerScroll 42s linear infinite; }
 .u-ticker:hover .u-ticker-track { animation-play-state: paused; }
 
+/* ── Hero ribbons: slow ambient drift — landing-fintech/index.html ──── */
+@keyframes ribbonDrift {
+  0%   { transform: translate3d(0,0,0)      scale(1); }
+  50%  { transform: translate3d(-2.5%,1.5%,0) scale(1.06); }
+  100% { transform: translate3d(0,0,0)      scale(1); }
+}
+.u-ribbon-a { animation: ribbonDrift 26s ease-in-out infinite; transform-origin: 30% 60%; }
+.u-ribbon-b { animation: ribbonDrift 34s ease-in-out infinite reverse; transform-origin: 70% 40%; }
+
+/* Ambient loops idle until their section is on screen — landing-fintech
+   /index.html §"Ambient loops idle...". An unpausable loop is an
+   accessibility failure (DESIGN.md §4 rule 3). Each component that renders
+   a [data-motion-gate] section arms its own IntersectionObserver locally
+   (see Hero.tsx) and toggles `is-onscreen`; more selectors join this pair
+   of rules as later landing sections (deck, live) are ported in their own
+   tasks. */
+[data-motion-gate] .u-ribbon-a,
+[data-motion-gate] .u-ribbon-b { animation-play-state: paused; }
+[data-motion-gate].is-onscreen .u-ribbon-a,
+[data-motion-gate].is-onscreen .u-ribbon-b { animation-play-state: running; }
+
+/* ── Signature: the contested seam — landing-fintech/index.html ─────── */
+@keyframes seamDraw { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.u-seam { transform-origin: top center; animation: seamDraw .8s cubic-bezier(0.22,1,0.36,1) both; animation-delay: .5s; }
+@keyframes seamSplitL { from { transform: translateX(14px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes seamSplitR { from { transform: translateX(-14px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.u-split-l { animation: seamSplitL .7s cubic-bezier(0.22,1,0.36,1) both; animation-delay: .8s; }
+.u-split-r { animation: seamSplitR .7s cubic-bezier(0.22,1,0.36,1) both; animation-delay: .8s; }
+
+.stat-rail [data-count] { font-variant-numeric: tabular-nums; }
+
 /* ═══════════════════════════════════════════════════════════════════
    Operate-surface patterns (research page) — DESIGN.md §9,
    web/design/research/index.html <style> block.
