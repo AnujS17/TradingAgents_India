@@ -80,6 +80,22 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // The 200 branch: an analysis for this ticker/date/profile already
+    // exists, so the API hands the existing run back for free instead of
+    // queueing (and charging for) a new one.
+    if (body.ticker === 'CACHED') {
+      res.statusCode = 200;
+      res.end(
+        JSON.stringify({
+          id: 'run-completed',
+          status: 'completed',
+          poll_url: '/runs/run-completed',
+          estimated_seconds: 0,
+        }),
+      );
+      return;
+    }
+
     if (body.ticker === 'PROGRESS') {
       progressivePollCount = 0;
       res.statusCode = 202;
