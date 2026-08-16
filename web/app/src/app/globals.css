@@ -1,26 +1,238 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════
+   Design tokens — ported verbatim from web/design/landing-fintech/index.html
+   and web/design/research/index.html (identical :root block in both).
+   See web/design/DESIGN.md §1, §4, §9. The two static reference files are
+   the source of truth; DESIGN.md is a prose summary of them.
+   ═══════════════════════════════════════════════════════════════════ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --navy: #00439D;  --accent-1: #1C6FE6;  --accent-2: #237FFB;  --accent-3: #3DA2F1;
+  --ink: #010101;   --ink-2: #202020;     --muted: #757575;
+  --tint: #F4F4F4;  --line-1: #EBEBEB;    --line-2: #E0E1E2;
+  --void: #050A18;  --void-2: #0A1226;    /* dark section ground */
+
+  /* Motion curves — research/index.html :root. DESIGN.md §4 pins the entrance
+     curve (--ease) and the accordion curve (--ease-open); --dur-open is the
+     Operate-surface disclosure duration (DESIGN.md §9, 260ms vs the landing
+     page's 450ms hero accordion). */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-open: cubic-bezier(.4, 0, .2, 1);
+  --dur-open: 260ms;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html { scroll-behavior: smooth; }
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  color: var(--ink-2);
+  /* clip, not hidden: overflow-x:hidden makes body a scroll container and
+     silently breaks every position:sticky descendant. clip does not. */
+  overflow-x: clip;
+}
+h1, h2, h3, h4, .font-tight { font-family: 'Inter Tight', ui-sans-serif, system-ui, sans-serif; }
+
+/* Browser surfaces belong to the design too — landing-fintech/index.html */
+:focus-visible { outline: 2px solid #3DA2F1; outline-offset: 3px; border-radius: 4px; }
+::selection { background: #1C6FE6; color: #fff; }
+html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #C3CEE4; border-radius: 99px; border: 3px solid #fff; }
+::-webkit-scrollbar-thumb:hover { background: #9BAACB; }
+
+/* ── Body copy roles — DESIGN.md §2, research/index.html (not present in
+   landing-fintech's own <style> block, but referenced throughout its markup
+   via Tailwind's text-sm; defined once here for both pages to share) ──── */
+.copy      { font-size: .9375rem; line-height: 1.62; }
+.copy-dark { font-size: .9375rem; line-height: 1.68; letter-spacing: .004em; }
+.measure   { max-width: 68ch; }
+
+/* ── Brand gradients — landing-fintech/index.html ────────────────────── */
+.grad-navy { background: linear-gradient(135deg, #00439D 0%, #1C6FE6 55%, #237FFB 100%); }
+.grad-text {
+  background: linear-gradient(100deg, #7FC4FF 0%, #3DA2F1 45%, #237FFB 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Motion vocabulary — DESIGN.md §4, lifted from univest.in
+   ═══════════════════════════════════════════════════════════════════ */
+@keyframes heroRise {
+  from { transform: translateY(var(--rise, 16px)); opacity: 0; }
+  to   { transform: translateY(0);                 opacity: 1; }
+}
+.u-rise { animation: heroRise .7s cubic-bezier(0.25,0.46,0.45,0.94) both; animation-delay: var(--delay, 0s); }
+
+@keyframes shimmer { 0% { transform: translateX(0); } 100% { transform: translateX(500%); } }
+.btn-shimmer { position: relative; overflow: hidden; }
+/* One-shot on hover, not a permanent sweep. A CTA that shimmers forever is
+   motion the reader cannot turn off; on hover it is feedback. */
+.btn-shimmer::after {
+  content: ""; position: absolute; top: -50%; left: -100%;
+  width: 60%; height: 200%;
+  background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,.3) 50%, transparent 100%);
+  opacity: 0; pointer-events: none;
+}
+.btn-shimmer:hover::after,
+.btn-shimmer:focus-visible::after {
+  opacity: 1;
+  animation: shimmer .85s cubic-bezier(0.22,1,0.36,1) 1;
+}
+
+/* Scroll reveal. DESIGN.md §4 rule 1: content renders visible by default;
+   JS (see src/lib/scroll-reveal.ts) adds `anim-ready` to *arm* the hidden
+   start state, and `is-in` once the element has scrolled into view.
+   NOTE: this deviates from the literal static-file rule
+   (`.u-reveal { opacity: 0; ... }` unconditionally) on purpose — that literal
+   version leaves content invisible forever with JS disabled, which is
+   exactly the failure DESIGN.md rule 1 documents. The `anim-ready` gate is
+   the fix, and is what the Step-4 hook's contract in the task brief expects. */
+.u-reveal {
+  transition: opacity .7s cubic-bezier(0.25,0.46,0.45,0.94),
+              transform .7s cubic-bezier(0.25,0.46,0.45,0.94);
+  transition-delay: var(--delay, 0s);
+}
+.u-reveal.anim-ready { opacity: 0; transform: translateY(28px); }
+.u-reveal.anim-ready.is-in { opacity: 1; transform: translateY(0); }
+
+@keyframes tickerScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.u-ticker-track { display: flex; width: max-content; animation: tickerScroll 42s linear infinite; }
+.u-ticker:hover .u-ticker-track { animation-play-state: paused; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Operate-surface patterns (research page) — DESIGN.md §9,
+   web/design/research/index.html <style> block.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Agent roster (sidebar). Operate mode: state is carried by a label plus
+   a shape, never a pulsing dot (DESIGN.md §4 rule 4). ─────────────────── */
+.ag { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 10px;
+      padding: 7px 0; }
+.ag__mark { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+            border: 2px solid var(--line-2); background: #fff; }
+.ag__name { font-size: .875rem; color: #5A6070; }
+
+.ag.is-done .ag__mark { border-color: var(--accent-1); background: var(--accent-1); }
+.ag.is-done .ag__name { color: var(--ink-2); }
+
+.ag.is-live .ag__mark { border-color: var(--accent-1); }
+.ag.is-live .ag__mark::after { content: ""; width: 8px; height: 8px; border-radius: 50%;
+                               background: var(--accent-1); }
+.ag.is-live .ag__name { color: var(--ink); font-weight: 600; }
+
+.team + .team { margin-top: 26px; }
+.team__link { font-family: 'Inter Tight', sans-serif; font-weight: 700; font-size: .9375rem;
+              color: var(--ink); text-decoration: none; display: inline-flex; align-items: baseline; gap: 8px; }
+.team__link:hover { color: var(--accent-1); }
+.team__n { font-size: .6875rem; font-weight: 700; color: #676D80; font-variant-numeric: tabular-nums; }
+
+/* ── Contested-point ledger. The seam is the spine of the verdict: one
+   continuous rule down the centre, with each contested topic breaking it.
+   Bull reads left, bear reads right. Below 900px the pairs stack and the
+   rule is dropped. ─────────────────────────────────────────────────── */
+.ledger { position: relative; }
+@media (min-width: 900px) {
+  .ledger::before { content: ""; position: absolute; left: 50%; top: 4px; bottom: 4px; width: 1px;
+    background: linear-gradient(180deg, transparent, #D3E1F7 7%, #D3E1F7 93%, transparent); }
+}
+
+.duel { display: grid; gap: 10px; }
+.duel + .duel { margin-top: 46px; }   /* 10px inside a pair, 46px between: DESIGN.md §3 rhythm */
+.duel__topic { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .8125rem;
+               letter-spacing: .02em; color: var(--ink); }
+.duel__side { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
+              letter-spacing: .09em; }
+.duel__bull .duel__side { color: var(--navy); }
+.duel__bear .duel__side { color: #1B6FA8; }
+
+/* Column headers carry the sides once at desktop, where left and right
+   already encode who is speaking. Below 900px the pairs stack, the spatial
+   cue is gone, and the per-row labels do the work instead. They stay in the
+   accessibility tree at every width: clipped, never display:none. */
+.ledger__head { display: none; }
+
+@media (min-width: 900px) {
+  .duel { grid-template-columns: 1fr 176px 1fr; gap: 0; align-items: start; }
+  .duel__bull  { grid-column: 1; grid-row: 1; text-align: right; padding-right: 4px; }
+  .duel__topic { grid-column: 2; grid-row: 1; text-align: center; background: #fff;
+                 padding: 3px 12px; align-self: center; }
+  .duel__bear  { grid-column: 3; grid-row: 1; padding-left: 4px; }
+
+  .duel .duel__side { position: absolute; width: 1px; height: 1px; overflow: hidden;
+                      clip-path: inset(50%); white-space: nowrap; }
+
+  .ledger__head { display: grid; grid-template-columns: 1fr 176px 1fr; margin-bottom: 20px; }
+  .ledger__head > :first-child { text-align: right; padding-right: 4px; color: var(--navy); }
+  .ledger__head > :last-child { padding-left: 4px; color: #1B6FA8; }
+}
+
+/* ── Risk comparison table. Grid items default to min-width:auto, so the
+   table's min-content width would otherwise propagate up and force the
+   whole main column wider than the viewport. ────────────────────────── */
+main > * { min-width: 0; }
+
+.rk { width: 100%; min-width: 560px; border-collapse: collapse; }
+.rk th, .rk td { padding: 15px 16px; text-align: left; vertical-align: top;
+                 border-bottom: 1px solid var(--line-1); }
+.rk thead th { border-bottom: 1px solid var(--line-2); padding-bottom: 11px; }
+.rk tbody tr:last-child th, .rk tbody tr:last-child td { border-bottom: 0; }
+.rk__row { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
+           letter-spacing: .085em; color: #676D80; white-space: nowrap; padding-left: 0; }
+.rk__who { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .9375rem; color: var(--ink); }
+.rk__val { font-size: .875rem; line-height: 1.5; color: #3A4152; }
+.rk__adopted { background: #F6FAFF; }
+.rk__tag { display: inline-block; font-family: 'Inter Tight', sans-serif; font-size: .625rem;
+           font-weight: 900; letter-spacing: .07em; color: #fff; background: var(--accent-1);
+           border-radius: 999px; padding: 3px 8px; margin-top: 6px; }
+
+/* ── Report list. Length-honest: the bar shows how long each document
+   actually is, so a 3,000-word report never masquerades as a 200-word
+   note. ──────────────────────────────────────────────────────────────── */
+.rep { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; align-items: baseline;
+       width: 100%; padding: 14px 0; border-bottom: 1px solid var(--line-1);
+       background: none; border-left: 0; border-right: 0; border-top: 0; text-align: left; cursor: pointer; }
+.rep__t { font-family: 'Inter Tight', sans-serif; font-weight: 600; font-size: 1rem; color: var(--ink);
+          display: inline-flex; align-items: center; gap: 9px; }
+.rep__chev { width: 11px; height: 11px; color: #676D80; transition: transform var(--dur-open) var(--ease-open); }
+.rep[aria-expanded="true"] .rep__chev { transform: rotate(90deg); color: var(--accent-1); }
+.rep[aria-expanded="true"] .rep__t { color: var(--accent-1); }
+.rep__w { font-family: 'Inter Tight', sans-serif; font-size: .75rem; font-weight: 700; color: #676D80;
+          font-variant-numeric: tabular-nums; }
+.rep__bar { grid-column: 1 / -1; height: 3px; border-radius: 3px; background: var(--line-1); overflow: hidden; }
+.rep__bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent-3);
+              transform-origin: left; transform: scaleX(var(--len,0)); transition: transform .6s var(--ease); }
+.rep:hover .rep__t { color: var(--accent-1); }
+
+/* retained for the in-flight frame: a report not yet written. State is
+   carried by weight and colour, not by opacity, so it stays legible. */
+.rep.is-pending { cursor: default; }
+.rep.is-pending .rep__t { color: #676D80; font-weight: 500; }
+
+/* One hairline per row in both states: the row rule hands off to the panel
+   when the panel opens, instead of both drawing. */
+.rep__panel { overflow: hidden; transition: max-height var(--dur-open) var(--ease-open); }
+.rep[aria-expanded="true"] { border-bottom-color: transparent; }
+.rep[aria-expanded="true"] + .rep__panel { border-bottom: 1px solid var(--line-1); }
+.js-armed .rep__panel { max-height: 0; }
+
+.rep__doc { max-height: 340px; overflow-y: auto; padding: 4px 2px 20px;
+            scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin; }
+.rep__doc p { font-size: .9375rem; line-height: 1.66; color: #3A4152; max-width: 68ch; }
+.rep__doc p + p { margin-top: 12px; }
+.rep__doc strong { color: var(--ink); font-weight: 600; }
+.rep__more { font-size: .8125rem; color: #676D80; margin-top: 14px; padding-top: 12px;
+             border-top: 1px solid var(--line-1); max-width: 68ch; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Reduced motion — DESIGN.md §4 rule 6. Drop movement, keep opacity/colour.
+   Near-identical block in both reference files; this is the union.
+   ═══════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important; scroll-behavior: auto !important;
+  }
+  .u-reveal.anim-ready { opacity: 1; transform: none; }
+  .u-ticker-track { animation: none !important; }
 }
