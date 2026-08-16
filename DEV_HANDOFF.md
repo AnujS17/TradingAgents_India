@@ -202,7 +202,7 @@ TradingAgents_Ind-ui-worktree/
 ├── api/                    # FastAPI service — don't touch
 ├── cli/                    # terminal client — don't touch
 ├── web/
-│   ├── design/              # ← the static comps, moved here (not done yet)
+│   ├── design/              # ← the static comps, moved here (complete)
 │   │   ├── DESIGN.md
 │   │   ├── landing-fintech/index.html
 │   │   ├── landing/index.html         (abandoned direction)
