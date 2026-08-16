@@ -237,3 +237,8 @@ skills-lock.json
 
 # Generated motion-audit reports (regenerate with the design-motion-principles skill)
 motion-audits/
+
+# The Python "lib/" rule above unintentionally matches web/app/src/lib/,
+# which is real frontend source (API client, etc.), not a Python venv dir.
+!web/app/src/lib/
+!web/app/src/lib/**
