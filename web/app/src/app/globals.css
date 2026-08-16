@@ -55,6 +55,11 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
   -webkit-text-fill-color: transparent; color: transparent;
 }
 
+/* Inset highlight on the 44px icon tiles (trust strip, use-cases). Flagged
+   `dark-glow` by the impeccable detector; DESIGN.md §8 documents this as a
+   standing override — it is an inset highlight, not a glow halo. */
+.icon-tile-shadow { box-shadow: 0 7px 24px 0 rgba(36,162,255,.16) inset; }
+
 /* ═══════════════════════════════════════════════════════════════════
    Motion vocabulary — DESIGN.md §4, lifted from univest.in
    ═══════════════════════════════════════════════════════════════════ */
@@ -130,6 +135,124 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 .u-split-r { animation: seamSplitR .7s cubic-bezier(0.22,1,0.36,1) both; animation-delay: .8s; }
 
 .stat-rail [data-count] { font-variant-numeric: tabular-nums; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Pipeline stack — landing-fintech/index.html lines 280-387, DESIGN.md §5
+   "sticky card stack". `.stack-card` elements pin at stepped `top` offsets
+   (`--navh + var(--i) * --strip`) so they pile up as the reader scrolls.
+   The --strip/top values below are copied verbatim from the source, not
+   re-derived: DESIGN.md notes --strip must exceed padding-top + label
+   height, and nav + (n-1)*strip + cardHeight must fit the viewport or the
+   last card clips. This block must never gain `overflow: hidden` on any
+   ancestor of a .stack-card — that breaks position: sticky (DESIGN.md §5).
+   ═══════════════════════════════════════════════════════════════════ */
+.stack-head {
+  font-size: clamp(2.25rem, 4.4vw, 3.4rem);
+  line-height: 1.02;
+  letter-spacing: -0.032em;
+}
+.stack-wrap { --strip: 62px; --navh: 64px; }
+
+.stack-card {
+  position: sticky;
+  top: calc(var(--navh) + var(--i) * var(--strip));
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  grid-template-rows: auto 1fr;
+  column-gap: clamp(2rem, 5vw, 5rem);
+  background: #fff;
+  border: 1px solid #DCE5F5;
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 -1px 0 #fff, 0 18px 44px -28px rgba(16, 34, 74, .34);
+  padding: 26px clamp(1.75rem, 3.4vw, 3rem) clamp(1.5rem, 2.4vw, 2.25rem);
+  margin-bottom: 26px;
+  min-height: 470px;
+}
+.stack-card:last-child { margin-bottom: 0; }
+
+.stack-label {
+  grid-column: 2; grid-row: 1;
+  font-family: 'Inter Tight', sans-serif;
+  font-weight: 700;
+  font-size: .95rem;
+  letter-spacing: .17em;
+  text-transform: uppercase;
+  color: #1C6FE6;
+  line-height: 1;
+  padding-bottom: 15px;
+}
+.stack-art  { grid-column: 1; grid-row: 2; display: flex; align-items: center; justify-content: center; }
+.stack-art svg { width: 100%; max-width: 302px; height: auto; filter: drop-shadow(0 22px 44px rgba(16,34,74,.20)); }
+.stack-copy { grid-column: 2; grid-row: 2; align-self: start; padding-top: 4px; }
+
+.stack-title {
+  font-family: 'Inter Tight', sans-serif;
+  font-weight: 800;
+  color: #010101;
+  font-size: clamp(1.65rem, 2.5vw, 2.35rem);
+  line-height: 1.08;
+  letter-spacing: -0.028em;
+  text-wrap: balance;
+  max-width: 19ch;
+}
+.stack-list { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+.stack-list li {
+  position: relative;
+  padding-left: 26px;
+  color: #40465A;
+  font-size: 1.02rem;
+  line-height: 1.55;
+  max-width: 46ch;
+}
+.stack-list li::before {
+  content: ""; position: absolute; left: 2px; top: .62em;
+  width: 7px; height: 7px; border-radius: 50%; background: #1C6FE6;
+}
+.stack-note {
+  margin-top: 22px; padding-top: 16px; border-top: 1px solid #EDF1F8;
+  color: #6B7186; font-size: .9rem; max-width: 42ch;
+}
+
+/* Short laptop viewports: the last card must still clear the stacked strips
+   above it, so tighten the strip and the artwork rather than clipping copy. */
+@media (min-width: 1024px) and (max-height: 760px) {
+  .stack-wrap { --strip: 50px; }
+  .stack-card { min-height: 424px; padding-top: 20px; }
+  .stack-label { padding-bottom: 9px; }
+  .stack-art svg { max-width: 256px; }
+  .stack-title { font-size: clamp(1.5rem, 2.1vw, 1.95rem); }
+  .stack-note { display: none; }
+}
+
+@media (max-width: 1023px) {
+  .stack-card {
+    position: static;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    min-height: 0;
+    padding: 24px 22px 30px;
+  }
+  .stack-label { grid-column: 1; grid-row: 1; padding-bottom: 18px; }
+  .stack-art   { grid-column: 1; grid-row: 2; margin-bottom: 26px; }
+  .stack-copy  { grid-column: 1; grid-row: 3; }
+  .stack-art svg { max-width: 268px; }
+}
+
+/* SVG app-screen type — real content, not placeholder bars */
+.s-mut    { font: 500 12px 'Inter', sans-serif; fill: #7B8299; letter-spacing: .06em; text-transform: uppercase; }
+.s-tick   { font: 800 22px 'Inter Tight', sans-serif; fill: #0E1730; letter-spacing: -.02em; }
+.s-lbl    { font: 700 13px 'Inter Tight', sans-serif; fill: #0E1730; }
+.s-val    { font: 400 12.5px 'Inter', sans-serif; fill: #5C6070; }
+.s-sml    { font: 400 12.5px 'Inter', sans-serif; fill: #40465A; }
+.s-tiny   { font: 700 11px 'Inter Tight', sans-serif; fill: #7B8299; }
+.s-fig    { font: 800 30px 'Inter Tight', sans-serif; fill: #0E1730; letter-spacing: -.025em; }
+.s-white  { font: 500 13px 'Inter', sans-serif; fill: #fff; }
+.s-white-lg { font: 800 24px 'Inter Tight', sans-serif; fill: #fff; letter-spacing: -.02em; }
+.s-dim    { font: 400 12px 'Inter', sans-serif; fill: rgba(255,255,255,.62); }
+.s-verdict{ font: 900 34px 'Inter Tight', sans-serif; fill: #00439D; letter-spacing: -.03em; }
+.s-blank  { font: 700 15px 'Inter Tight', sans-serif; fill: #9AA1B4; }
+.s-strong { font: 700 12.5px 'Inter Tight', sans-serif; fill: #00439D; }
 
 /* ═══════════════════════════════════════════════════════════════════
    Operate-surface patterns (research page) — DESIGN.md §9,
