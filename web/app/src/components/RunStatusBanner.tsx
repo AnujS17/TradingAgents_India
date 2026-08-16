@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { RunDetail } from '@/lib/api-client/client';
+import { parseApiTimestamp } from '@/lib/format';
 
 export function RunStatusBanner({
   run,
@@ -14,7 +15,7 @@ export function RunStatusBanner({
 
   useEffect(() => {
     if (run.status !== 'queued' && run.status !== 'running') return;
-    const startedAt = Date.parse(run.created_at);
+    const startedAt = parseApiTimestamp(run.created_at);
     const tick = () => setElapsedSeconds(Math.max(0, Math.round((Date.now() - startedAt) / 1000)));
     tick();
     const interval = setInterval(tick, 1000);
