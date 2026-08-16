@@ -50,6 +50,18 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Browsers preflight cross-origin POSTs with a JSON body (the Next.js
+  // dev server on :3100 calling this mock on :8010 counts as cross-origin).
+  // Without a 2xx response to OPTIONS here, the real POST never leaves the
+  // browser and fetch() rejects before the app ever sees a status code.
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
 
   if (req.method === 'POST' && url.pathname === '/analyze') {
     const chunks: Buffer[] = [];
@@ -95,7 +107,11 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify(progressiveRun()));
       return;
     }
-    const run = runs.get(id);
+    // Fall back to matching a fixture's own internal `id` field: /runs
+    // (below) echoes each stored fixture's internal `id`, not the Map key
+    // it's filed under, so a link built from that listing (e.g.
+    // RecentRuns) must still resolve here or it 404s as a dead link.
+    const run = runs.get(id) ?? [...runs.values()].find((entry) => entry.id === id);
     if (!run) {
       res.statusCode = 404;
       res.end(JSON.stringify({ detail: 'Run not found' }));
