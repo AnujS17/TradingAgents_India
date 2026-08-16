@@ -33,7 +33,7 @@ describe('SearchForm', () => {
 
     render(<SearchForm />);
     await userEvent.type(screen.getByLabelText(/Ticker/), 'SIEMENS.NS');
-    await userEvent.click(screen.getByRole('button', { name: /Analyse/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
 
     expect(pushMock).toHaveBeenCalledWith('/runs/r1?cached=1');
   });
@@ -46,7 +46,7 @@ describe('SearchForm', () => {
 
     render(<SearchForm />);
     await userEvent.type(screen.getByLabelText(/Ticker/), 'RELIANCE');
-    await userEvent.click(screen.getByRole('button', { name: /Analyse/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
 
     // est= carries the 202's estimated_seconds through the navigation — the
     // run detail endpoint never returns it, so this is its only route to the
@@ -66,7 +66,7 @@ describe('SearchForm', () => {
     expect(screen.getByLabelText(/Ticker/)).toHaveValue('SIEMENS.NS');
     expect(screen.getByLabelText(/Analysis date/)).toHaveValue('2026-08-12');
 
-    await userEvent.click(screen.getByRole('button', { name: /Analyse/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
 
     expect(analyzeRun).toHaveBeenCalledWith({
       ticker: 'SIEMENS.NS',
@@ -83,7 +83,7 @@ describe('SearchForm', () => {
 
     render(<SearchForm />);
     await userEvent.type(screen.getByLabelText(/Ticker/), 'RELIANCE');
-    await userEvent.click(screen.getByRole('button', { name: /Analyse/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
 
     expect(analyzeRun).toHaveBeenCalledWith({ ticker: 'RELIANCE', profile: 'fast' });
   });
@@ -93,10 +93,20 @@ describe('SearchForm', () => {
 
     render(<SearchForm />);
     await userEvent.type(screen.getByLabelText(/Ticker/), 'SIEMENS.NS');
-    await userEvent.click(screen.getByRole('button', { name: /Analyse/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Daily limit reached.');
     expect(screen.getByRole('alert')).toHaveTextContent('Existing analyses are still available');
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it('renders the nav variant with a single ticker input', () => {
+    render(<SearchForm variant="nav" />);
+    expect(screen.getByLabelText('Research another stock')).toBeInTheDocument();
+  });
+
+  it('renders the cta variant with a single ticker input', () => {
+    render(<SearchForm variant="cta" />);
+    expect(screen.getByPlaceholderText('Enter a ticker, e.g. TCS')).toBeInTheDocument();
   });
 });
