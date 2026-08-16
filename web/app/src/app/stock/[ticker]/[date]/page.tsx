@@ -1,15 +1,22 @@
 import Link from 'next/link';
-import { getRunByTicker } from '@/lib/api-client/client';
+import { getRunByTicker, type AnalysisProfile } from '@/lib/api-client/client';
 import { RunView } from '@/components/RunView';
 
 export default async function StockPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ ticker: string; date: string }>;
+  searchParams: Promise<{ profile?: string }>;
 }) {
   const { ticker, date } = await params;
+  // A run is keyed by ticker+date+profile, so without this a `detailed` run is
+  // unreachable from its own canonical URL and the page wrongly claims no
+  // analysis exists.
+  const { profile: requestedProfile } = await searchParams;
+  const profile: AnalysisProfile = requestedProfile === 'detailed' ? 'detailed' : 'fast';
   const decodedTicker = decodeURIComponent(ticker);
-  const run = await getRunByTicker(decodedTicker, date);
+  const run = await getRunByTicker(decodedTicker, date, profile);
 
   if (!run) {
     return (
