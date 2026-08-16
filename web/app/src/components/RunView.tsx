@@ -30,7 +30,12 @@ export function RunView({
       {current.status === 'completed' && (
         <>
           <VerdictSummary verdict={current.verdict ?? null} />
-          <RunHistoryPanel history={historyQuery.data ?? null} />
+          <RunHistoryPanel
+            runCount={current.run_count}
+            isContested={current.verdict_is_contested}
+            history={historyQuery.data ?? null}
+            isError={historyQuery.isError}
+          />
           <ReportsAccordion reports={current.reports ?? null} />
         </>
       )}
