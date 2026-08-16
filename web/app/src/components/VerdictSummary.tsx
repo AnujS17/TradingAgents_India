@@ -3,6 +3,11 @@ import type { Verdict } from '@/lib/api-client/client';
 
 export function VerdictSummary({ verdict }: { verdict: Verdict | null }) {
   if (!verdict) return null;
+  // `levels = {}` is a compile-time-only safety net, not a real runtime case.
+  // The backend's `Verdict.levels` uses `Field(default_factory=TradeLevels)`
+  // (api/schemas.py), and Pydantic leaves default-factory fields out of the
+  // JSON Schema `required` array — so the generated types mark it optional
+  // even though every actual API response populates it.
   const { rating, price_target, time_horizon, levels = {} } = verdict;
 
   return (

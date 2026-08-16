@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TradingAgents web app
 
-## Getting Started
+Next.js (App Router) frontend for the TradingAgents Indian-equity research engine — search a ticker, watch a run progress, read the verdict and the full evidence behind it.
 
-First, run the development server:
+## Environment
+
+Copy `.env.local.example` to `.env.local`. Both variables are needed, and they are deliberately duplicated: server-side fetches (RSC) run in Node and read `API_BASE_URL`, while browser fetches read `NEXT_PUBLIC_API_BASE_URL`, which Next.js inlines into the client bundle **at build time**.
+
+| Variable | Used by | Default if unset |
+| --- | --- | --- |
+| `API_BASE_URL` | Server Components, server-side fetches | `http://127.0.0.1:8000` |
+| `NEXT_PUBLIC_API_BASE_URL` | Browser fetches (polling, form submits) | `http://127.0.0.1:8000` |
+
+**Deployment risk:** because `NEXT_PUBLIC_API_BASE_URL` is baked in at build time, a production build made without it falls back to `http://127.0.0.1:8000` — which points every visitor's browser at *their own machine*, not your server. Set it in the build environment, not just at runtime, and rebuild after changing it.
+
+## Backend
+
+Nothing works without the FastAPI backend, which is **two processes** (see the repo root `DEV_HANDOFF.md`):
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+python -m uvicorn api.main:app --reload   # the API
+python -m api.worker                      # executes queued analyses
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Without the worker, submitted runs sit at `queued` forever. That is expected, not a bug.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev        # dev server on http://localhost:3000
+npm run build      # production build
+npm test           # unit + component tests (Vitest)
+npm run test:e2e   # end-to-end tests (Playwright)
+npm run lint       # ESLint
+```
 
-## Learn More
+`npm run test:e2e` starts its own mock API on port 8010 and a dev server on port 3100, so the E2E suite never needs the real backend and never spends LLM money. Unit tests stub `fetch` and need nothing running.
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`npm run generate:api-types` regenerates `src/lib/api-client/types.gen.ts` from `api/openapi.json`; that file is generated, don't hand-edit it. The hand-written wrapper in `src/lib/api-client/client.ts` is where API behaviour the spec doesn't capture (200-vs-202 on `POST /analyze`, 429 bodies) is encoded.

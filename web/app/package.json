@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "generate:api-types": "openapi-typescript ../../api/openapi.json -o src/lib/api-client/types.gen.ts",
+    "test": "vitest run",
     "test:e2e": "playwright test"
   },
   "dependencies": {
