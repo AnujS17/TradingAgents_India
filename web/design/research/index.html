@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIEMENS.NS research · Bench</title>
+<meta name="description" content="Twelve AI agents researched SIEMENS.NS. Read the argument, trace every number.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { fontFamily: {
+    sans:  ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+    tight: ['Inter Tight', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+  } } } }
+</script>
+
+<style>
+  /* Tokens: identical to web/design/landing-fintech/index.html. See web/design/DESIGN.md §1. */
+  :root {
+    --navy: #00439D; --accent-1: #1C6FE6; --accent-2: #237FFB; --accent-3: #3DA2F1;
+    --ink: #010101;  --ink-2: #202020;    --muted: #757575;
+    --tint: #F4F4F4; --line-1: #EBEBEB;   --line-2: #E0E1E2;
+    --void: #050A18; --void-2: #0A1226;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    /* Disclosure curve. DESIGN.md §4 pins the accordion curve; the duration there
+       (450ms) is tuned for one hero accordion on the landing page. This is an
+       Operate surface with ten stacked rows, so the curve carries over and the
+       duration comes down. Same vocabulary, surface-appropriate tempo. */
+    --ease-open: cubic-bezier(.4, 0, .2, 1);
+    --dur-open: 260ms;
+  }
+  html { scroll-behavior: smooth; }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: var(--ink-2); overflow-x: clip; }
+  h1,h2,h3,h4,.font-tight { font-family: 'Inter Tight', ui-sans-serif, system-ui, sans-serif; }
+
+  /* Body role — DESIGN.md §2 */
+  .copy      { font-size: .9375rem; line-height: 1.62; }
+  .copy-dark { font-size: .9375rem; line-height: 1.68; letter-spacing: .004em; }
+  .measure   { max-width: 68ch; }
+
+  .grad-navy { background: linear-gradient(135deg,#00439D 0%,#1C6FE6 55%,#237FFB 100%); }
+
+  /* ── Agent roster ─────────────────────────────────────────────────
+     Operate mode: state is carried by a label plus a shape, never by a
+     pulsing dot (DESIGN.md §4 rule 4). The run on this page is complete,
+     so every row renders .is-done. The .is-live and .rep.is-pending rules
+     below are retained for the in-flight frame of the same page, the way
+     DESIGN.md §5 retains the commented-out #engine CSS. Neither animates. */
+  .ag { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 10px;
+        padding: 7px 0; }
+  .ag__mark { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+              border: 2px solid var(--line-2); background: #fff; }
+  .ag__name { font-size: .875rem; color: #5A6070; }
+
+  .ag.is-done .ag__mark { border-color: var(--accent-1); background: var(--accent-1); }
+  .ag.is-done .ag__name { color: var(--ink-2); }
+
+  /* retained, unrendered on this frame: an agent still working */
+  .ag.is-live .ag__mark { border-color: var(--accent-1); }
+  .ag.is-live .ag__mark::after { content: ""; width: 8px; height: 8px; border-radius: 50%;
+                                 background: var(--accent-1); }
+  .ag.is-live .ag__name { color: var(--ink); font-weight: 600; }
+
+  .team + .team { margin-top: 26px; }
+  .team__link { font-family: 'Inter Tight', sans-serif; font-weight: 700; font-size: .9375rem;
+                color: var(--ink); text-decoration: none; display: inline-flex; align-items: baseline; gap: 8px; }
+  .team__link:hover { color: var(--accent-1); }
+  .team__n { font-size: .6875rem; font-weight: 700; color: #676D80; font-variant-numeric: tabular-nums; }
+
+  /* ── Contested-point ledger ───────────────────────────────────────
+     The seam is the spine of the verdict: one continuous rule down the
+     centre, with each contested topic breaking it. Bull reads left, bear
+     reads right, and the rule makes the disagreement structural rather
+     than decorative. Below 900px the pairs stack and the rule is dropped. */
+  .ledger { position: relative; }
+  @media (min-width: 900px) {
+    .ledger::before { content: ""; position: absolute; left: 50%; top: 4px; bottom: 4px; width: 1px;
+      background: linear-gradient(180deg, transparent, #D3E1F7 7%, #D3E1F7 93%, transparent); }
+  }
+
+  .duel { display: grid; gap: 10px; }
+  .duel + .duel { margin-top: 46px; }   /* 10px inside a pair, 46px between: DESIGN.md §3 rhythm */
+  .duel__topic { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .8125rem;
+                 letter-spacing: .02em; color: var(--ink); }
+  .duel__side { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
+                letter-spacing: .09em; }
+  .duel__bull .duel__side { color: var(--navy); }
+  .duel__bear .duel__side { color: #1B6FA8; }
+
+  /* Column headers carry the sides once at desktop, where left and right
+     already encode who is speaking. Below 900px the pairs stack, the spatial
+     cue is gone, and the per-row labels do the work instead. They stay in the
+     accessibility tree at every width: clipped, never display:none. */
+  .ledger__head { display: none; }
+
+  @media (min-width: 900px) {
+    .duel { grid-template-columns: 1fr 176px 1fr; gap: 0; align-items: start; }
+    .duel__bull  { grid-column: 1; grid-row: 1; text-align: right; padding-right: 4px; }
+    .duel__topic { grid-column: 2; grid-row: 1; text-align: center; background: #fff;
+                   padding: 3px 12px; align-self: center; }
+    .duel__bear  { grid-column: 3; grid-row: 1; padding-left: 4px; }
+
+    .duel .duel__side { position: absolute; width: 1px; height: 1px; overflow: hidden;
+                        clip-path: inset(50%); white-space: nowrap; }
+
+    .ledger__head { display: grid; grid-template-columns: 1fr 176px 1fr; margin-bottom: 20px; }
+    .ledger__head > :first-child { text-align: right; padding-right: 4px; color: var(--navy); }
+    .ledger__head > :last-child { padding-left: 4px; color: #1B6FA8; }
+  }
+
+  /* ── Evidence trace ───────────────────────────────────────────────
+     A figure in the argument is a button. Opening it shows the pre-fetched
+     tool value the agent was handed, not a restatement of the claim. This
+     is the run's no-invented-numbers discipline made inspectable. */
+  .fig { font: inherit; color: var(--navy); font-weight: 600; background: none; border: 0;
+         padding: 0 1px; cursor: pointer; border-bottom: 1px dashed #9FC0EE;
+         transition: background-color .15s, border-color .15s; }
+  .fig:hover { background: #EEF5FF; border-bottom-color: var(--accent-1); }
+  .fig[aria-expanded="true"] { background: #E4EFFE; border-bottom-style: solid; border-bottom-color: var(--accent-1); }
+
+  /* Disclosure is progressive enhancement, the same way DESIGN.md §4 rule 1
+     treats reveals: the resting state is open, and JS *arms* the collapsed
+     state on load. With JS off every report body and every traced value is
+     still readable, just not collapsible. */
+  /* Positioned so it paints above .ledger::before. The seam rule is absolutely
+     positioned, so a static panel would let the line show through the card. */
+  .trace { overflow: hidden; transition: max-height var(--dur-open) var(--ease-open);
+           position: relative; z-index: 1; }
+  .js-armed .trace { max-height: 0; }
+  .trace__in { margin-top: 16px; border: 1px solid #D3E1F7; background: #F6FAFF;
+               border-radius: 14px; padding: 15px 17px; text-align: left; }
+  .trace__src { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
+                letter-spacing: .085em; color: var(--accent-1); }
+  .trace__k { font-size: .8125rem; color: #676D80; margin-top: 9px; }
+  .trace__v { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: 1.0625rem;
+              color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+  .trace__note { font-size: .8125rem; line-height: 1.55; color: #5A6070; margin-top: 7px; }
+  .trace__series { font-size: .78125rem; color: #676D80; margin-top: 9px; font-variant-numeric: tabular-nums;
+                   letter-spacing: .012em; padding-top: 9px; border-top: 1px solid #E2EBF8; }
+
+  /* ── Risk comparison table ────────────────────────────────────────
+     Three analysts, one plan, three different numbers. A table because it
+     is tabular: the reader is comparing values across a fixed set of rows. */
+  /* Grid items default to min-width:auto, so the table's min-content width
+     propagated up and forced the whole main column wider than the viewport.
+     Letting the items shrink is what allows the wrapper to actually scroll. */
+  main > * { min-width: 0; }
+
+  .rk { width: 100%; min-width: 560px; border-collapse: collapse; }
+  .rk th, .rk td { padding: 15px 16px; text-align: left; vertical-align: top;
+                   border-bottom: 1px solid var(--line-1); }
+  .rk thead th { border-bottom: 1px solid var(--line-2); padding-bottom: 11px; }
+  .rk tbody tr:last-child th, .rk tbody tr:last-child td { border-bottom: 0; }
+  .rk__row { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
+             letter-spacing: .085em; color: #676D80; white-space: nowrap; padding-left: 0; }
+  .rk__who { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .9375rem; color: var(--ink); }
+  .rk__val { font-size: .875rem; line-height: 1.5; color: #3A4152; }
+  .rk__adopted { background: #F6FAFF; }
+  .rk__tag { display: inline-block; font-family: 'Inter Tight', sans-serif; font-size: .625rem;
+             font-weight: 900; letter-spacing: .07em; color: #fff; background: var(--accent-1);
+             border-radius: 999px; padding: 3px 8px; margin-top: 6px; }
+
+  /* ── Report list ──────────────────────────────────────────────────
+     Length-honest: the bar shows how long each document actually is, so a
+     3,000-word sentiment report never masquerades as a 200-word note. */
+  .rep { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; align-items: baseline;
+         width: 100%; padding: 14px 0; border-bottom: 1px solid var(--line-1);
+         background: none; border-left: 0; border-right: 0; border-top: 0; text-align: left; cursor: pointer; }
+  .rep__t { font-family: 'Inter Tight', sans-serif; font-weight: 600; font-size: 1rem; color: var(--ink);
+            display: inline-flex; align-items: center; gap: 9px; }
+  .rep__chev { width: 11px; height: 11px; color: #676D80; transition: transform var(--dur-open) var(--ease-open); }
+  .rep[aria-expanded="true"] .rep__chev { transform: rotate(90deg); color: var(--accent-1); }
+  .rep[aria-expanded="true"] .rep__t { color: var(--accent-1); }
+  .rep__w { font-family: 'Inter Tight', sans-serif; font-size: .75rem; font-weight: 700; color: #676D80;
+            font-variant-numeric: tabular-nums; }
+  .rep__bar { grid-column: 1 / -1; height: 3px; border-radius: 3px; background: var(--line-1); overflow: hidden; }
+  .rep__bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent-3);
+                transform-origin: left; transform: scaleX(var(--len,0)); transition: transform .6s var(--ease); }
+  .rep:hover .rep__t { color: var(--accent-1); }
+
+  /* retained for the in-flight frame: a report not yet written. State is
+     carried by weight and colour, not by opacity, so it stays legible. */
+  .rep.is-pending { cursor: default; }
+  .rep.is-pending .rep__t { color: #676D80; font-weight: 500; }
+
+  /* One hairline per row in both states: the row rule hands off to the panel
+     when the panel opens, instead of both drawing. */
+  .rep__panel { overflow: hidden; transition: max-height var(--dur-open) var(--ease-open); }
+  .rep[aria-expanded="true"] { border-bottom-color: transparent; }
+  .rep[aria-expanded="true"] + .rep__panel { border-bottom: 1px solid var(--line-1); }
+  .js-armed .rep__panel { max-height: 0; }
+
+  /* Evidence store: the traced values as ordinary document content. JS clones
+     from here into the inline panels; with JS off it renders as a plain list. */
+  .js-armed .trace-store { display: none; }
+  .trace-store .trace__in { margin-top: 14px; }
+  .rep__doc { max-height: 340px; overflow-y: auto; padding: 4px 2px 20px;
+              scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin; }
+  .rep__doc p { font-size: .9375rem; line-height: 1.66; color: #3A4152; max-width: 68ch; }
+  .rep__doc p + p { margin-top: 12px; }
+  .rep__doc strong { color: var(--ink); font-weight: 600; }
+  .rep__more { font-size: .8125rem; color: #676D80; margin-top: 14px; padding-top: 12px;
+               border-top: 1px solid var(--line-1); max-width: 68ch; }
+
+  .src { border-left: 2px solid var(--line-2); padding-left: 12px; color: #676D80; font-size: .8125rem; line-height: 1.55; }
+
+  :focus-visible { outline: 2px solid var(--accent-1); outline-offset: 3px; border-radius: 4px; }
+  ::selection { background: var(--accent-1); color: #fff; }
+  html { caret-color: var(--accent-1); scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,*::before,*::after { animation-duration:.001ms !important; animation-iteration-count:1 !important;
+      transition-duration:.001ms !important; scroll-behavior:auto !important; }
+  }
+</style>
+</head>
+
+<body class="bg-[#F7F8FB]">
+
+<!-- ═══════════════ NAV ═══════════════ -->
+<header class="sticky top-0 z-50 backdrop-blur-md border-b border-white/10" style="background-color:rgba(5,10,24,.94);">
+  <div class="max-w-screen-xl mx-auto px-6 lg:px-8 h-16 flex items-center justify-between gap-6">
+    <!-- TODO(name): wordmark is a placeholder -->
+    <a href="../landing-fintech/index.html" class="flex items-center gap-2.5 font-tight font-extrabold text-lg text-white shrink-0">
+      <span class="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">B</span>
+      Bench
+    </a>
+    <form class="flex-1 max-w-md relative" onsubmit="return false;">
+      <label for="ticker" class="sr-only">Research another stock</label>
+      <svg class="absolute left-4 top-1/2 -translate-y-1/2" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="#8FA0C4" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="#8FA0C4" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="ticker" type="text" placeholder="Research another stock"
+             class="w-full rounded-full border border-white/15 bg-white/[0.06] pl-11 pr-4 py-2.5 text-sm text-white placeholder:text-white/55 focus:outline-none focus:border-[#3DA2F1] transition-colors">
+    </form>
+    <span class="hidden sm:block text-xs font-tight font-bold text-white/50 shrink-0">Fast run</span>
+  </div>
+</header>
+
+<!-- ═══════════════ RUN HEADER ═══════════════ -->
+<section class="bg-[#050A18]">
+  <div class="max-w-screen-xl mx-auto px-6 lg:px-8 py-10">
+    <div class="flex flex-wrap items-end justify-between gap-6">
+      <div>
+        <h1 class="font-tight font-black text-white text-4xl sm:text-5xl tracking-[-0.03em] leading-[1.02]">SIEMENS.NS</h1>
+        <p class="copy-dark text-white/55 mt-2">Siemens India &middot; analysed 12 August 2026</p>
+      </div>
+
+      <div class="w-full sm:w-auto sm:min-w-[300px]">
+        <p class="font-tight font-bold text-white text-base">All 12 agents finished</p>
+        <dl class="flex items-baseline gap-6 mt-3">
+          <div>
+            <dt class="text-xs text-white/55">Run time</dt>
+            <dd class="font-tight font-bold text-[#7FC4FF] text-lg tabular-nums mt-0.5">4m 41s</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-white/55">Written</dt>
+            <dd class="font-tight font-bold text-[#7FC4FF] text-lg tabular-nums mt-0.5">11,375 words</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-white/55">Reports</dt>
+            <dd class="font-tight font-bold text-[#7FC4FF] text-lg tabular-nums mt-0.5">10</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+
+<main class="max-w-screen-xl mx-auto px-6 lg:px-8 py-10 grid lg:grid-cols-[260px_1fr] gap-8 lg:gap-12 items-start">
+
+  <!-- ═══════════════ LEFT: THE DESK ═══════════════ -->
+  <aside class="lg:sticky lg:top-24">
+    <h2 class="font-tight font-extrabold text-[#010101] text-lg">The desk</h2>
+    <p class="copy text-[#6F6F6F] mt-1 mb-6">Five teams. Each handed its work to the next.</p>
+
+    <div class="team">
+      <a class="team__link" href="#record">Analysts <span class="team__n">4</span></a>
+      <div class="mt-2">
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Market</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Fundamentals</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">News</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Sentiment</span></div>
+      </div>
+    </div>
+
+    <div class="team">
+      <a class="team__link" href="#disagree">Research <span class="team__n">3</span></a>
+      <div class="mt-2">
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Bull researcher</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Bear researcher</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Research manager</span></div>
+      </div>
+    </div>
+
+    <div class="team">
+      <a class="team__link" href="#record">Trader <span class="team__n">1</span></a>
+      <div class="mt-2">
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Trader</span></div>
+      </div>
+    </div>
+
+    <div class="team">
+      <a class="team__link" href="#risk">Risk panel <span class="team__n">3</span></a>
+      <div class="mt-2">
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Aggressive</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Neutral</span></div>
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Conservative</span></div>
+      </div>
+    </div>
+
+    <div class="team">
+      <a class="team__link" href="#call">Portfolio <span class="team__n">1</span></a>
+      <div class="mt-2">
+        <div class="ag is-done"><span class="ag__mark"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ag__name">Portfolio manager</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════ RIGHT: THE WORK ═══════════════ -->
+  <div>
+
+    <!-- ═══ THE CALL ═══ -->
+    <section id="call" class="rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 class="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">The call</h2>
+          <p class="copy text-[#6F6F6F] mt-1">The portfolio manager ruled after both debates closed.</p>
+        </div>
+        <span class="font-tight font-bold text-xs rounded-full bg-[#F0F6FF] text-[#00439D] border border-[#D3E1F7] px-3.5 py-2">Complete</span>
+      </div>
+
+      <!-- five-stop ruler. Rating is Underweight, stop 2 of 5. -->
+      <div class="mt-7">
+        <div class="grid grid-cols-5 items-center">
+          <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-[#EBEBEB] shrink-0"></span><span class="h-1.5 flex-1 bg-[#EBEBEB]"></span></div>
+          <div class="flex items-center"><span class="h-4 w-4 rounded-full bg-[#00439D] ring-4 ring-[#00439D]/15 shrink-0"></span><span class="h-1.5 flex-1 bg-[#EBEBEB]"></span></div>
+          <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-[#EBEBEB] shrink-0"></span><span class="h-1.5 flex-1 bg-[#EBEBEB]"></span></div>
+          <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-[#EBEBEB] shrink-0"></span><span class="h-1.5 flex-1 bg-[#EBEBEB]"></span></div>
+          <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-[#EBEBEB] shrink-0"></span></div>
+        </div>
+        <div class="grid grid-cols-5 mt-2.5 font-tight text-[11px] font-bold tracking-wide text-[#676D80]">
+          <span>SELL</span><span class="text-[#00439D]">UNDERWEIGHT</span><span>HOLD</span><span>OVERWEIGHT</span><span>BUY</span>
+        </div>
+      </div>
+
+      <dl class="grid sm:grid-cols-4 gap-px bg-[#EBEBEB] rounded-2xl overflow-hidden mt-7">
+        <div class="bg-white p-4"><dt class="font-tight text-[11px] font-bold tracking-wide text-[#676D80]">ACTION</dt><dd class="font-tight font-extrabold text-[#010101] text-lg mt-1">Hold</dd></div>
+        <div class="bg-white p-4"><dt class="font-tight text-[11px] font-bold tracking-wide text-[#676D80]">ENTRY</dt><dd class="font-tight font-semibold text-[#676D80] text-lg mt-1">Not set</dd></div>
+        <div class="bg-white p-4"><dt class="font-tight text-[11px] font-bold tracking-wide text-[#676D80]">STOP</dt><dd class="font-tight font-semibold text-[#676D80] text-lg mt-1">Not set</dd></div>
+        <div class="bg-white p-4"><dt class="font-tight text-[11px] font-bold tracking-wide text-[#676D80]">HORIZON</dt><dd class="font-tight font-extrabold text-[#010101] text-lg mt-1">3&ndash;6 months</dd></div>
+      </dl>
+      <p class="copy text-[#6F6F6F] mt-4 measure">
+        Entry and stop are blank because the evidence does not support a number yet.
+        A blank field is a decision, not a gap.
+      </p>
+
+      <div class="mt-7 rounded-2xl bg-[#F4F6FB] border border-[#DCE5F5] p-5 lg:p-6" data-trace-scope>
+        <p class="font-tight font-extrabold text-[#010101] text-lg">What the manager actually said</p>
+        <p class="copy text-[#3A4152] mt-2 measure">
+          Trim roughly 25&ndash;30% of the position into the
+          <button type="button" class="fig" data-trace="boll_ub" aria-expanded="false" aria-controls="tr-call">&#8377;4,041&ndash;4,100</button>
+          resistance zone rather than chase the story at about 93x trailing earnings. Do not buy the
+          3,860&ndash;3,900 dip while momentum cools:
+          <button type="button" class="fig" data-trace="rsi" aria-expanded="false" aria-controls="tr-call">RSI at 66</button>,
+          <button type="button" class="fig" data-trace="macdh" aria-expanded="false" aria-controls="tr-call">four sessions of MACD compression</button>,
+          and a failed close above the upper Bollinger Band. Keep a reduced core at roughly half of
+          full weight, ladder re-entry at
+          <button type="button" class="fig" data-trace="boll" aria-expanded="false" aria-controls="tr-call">&#8377;3,736</button>
+          and &#8377;3,500&ndash;3,550 only on volume confirmation.
+        </p>
+        <div class="trace" id="tr-call" data-trace-panel></div>
+        <p class="src mt-4">Portfolio manager &middot; 558 words. Click any blue figure to see the pre-fetched value it came from.</p>
+      </div>
+    </section>
+
+    <!-- ═══ WHERE THEY DISAGREE ═══ -->
+    <section id="disagree" class="mt-8 rounded-[28px] border border-[#DCE5F5] bg-white p-7 lg:p-9">
+      <h2 class="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">Where they disagree</h2>
+      <p class="copy text-[#6F6F6F] mt-1 measure">
+        The bull and the bear read the same four analyst reports. These are the six points
+        they actually fought over, in their own words.
+      </p>
+
+      <div class="text-center mt-9">
+        <p class="font-tight font-black text-[#010101] text-4xl tracking-[-0.025em]">Operating margin</p>
+        <p class="copy text-[#6F6F6F] mt-1.5">the number the whole argument turns on</p>
+      </div>
+
+      <div class="ledger mt-10" data-trace-scope>
+
+        <div class="ledger__head">
+          <p class="duel__side">BULL</p>
+          <p></p>
+          <p class="duel__side">BEAR</p>
+        </div>
+
+        <div class="duel">
+          <p class="duel__topic">The LVM gain</p>
+          <div class="duel__bull">
+            <p class="duel__side">BULL</p>
+            <p class="copy text-[#2C3242] mt-2">
+              Adjusted PAT fell because the company deliberately exited a lower-margin motors
+              business. That is portfolio engineering, not deterioration.
+            </p>
+          </div>
+          <div class="duel__bear">
+            <p class="duel__side">BEAR</p>
+            <p class="copy text-[#2C3242] mt-2">
+              Exiting a lower-margin business should lift margins. Instead they collapsed. That is a
+              core margin problem masked by a &#8377;2,099 crore one-off.
+            </p>
+          </div>
+        </div>
+
+        <div class="duel">
+          <p class="duel__topic">The balance sheet</p>
+          <div class="duel__bull">
+            <p class="duel__side">BULL</p>
+            <p class="copy text-[#2C3242] mt-2">
+              A &#8377;6,800 crore net-cash cushion plus an &#8377;18 dividend funds that growth
+              without leverage.
+            </p>
+          </div>
+          <div class="duel__bear">
+            <p class="duel__side">BEAR</p>
+            <p class="copy text-[#2C3242] mt-2">
+              Net cash is real, but it is not a growth engine at 93x. FY25 free cash flow was
+              <button type="button" class="fig" data-trace="fcf" aria-expanded="false" aria-controls="tr-ledger">negative &#8377;6 crore</button>,
+              and operating cash flow collapsed from &#8377;1,655 crore to &#8377;375 crore.
+            </p>
+          </div>
+        </div>
+
+        <div class="duel">
+          <p class="duel__topic">The tape</p>
+          <div class="duel__bull">
+            <p class="duel__side">BULL</p>
+            <p class="copy text-[#2C3242] mt-2">
+              <button type="button" class="fig" data-trace="rsi" aria-expanded="false" aria-controls="tr-ledger">RSI cooled from 76 to 66</button>:
+              textbook overbought unwinding, not distribution. The pullback came on
+              <button type="button" class="fig" data-trace="vol" aria-expanded="false" aria-controls="tr-ledger">213&ndash;261k volume</button>
+              against the
+              <button type="button" class="fig" data-trace="aug4" aria-expanded="false" aria-controls="tr-ledger">1.11M spike on August 4</button>.
+              Accumulation, then a quiet dip.
+            </p>
+          </div>
+          <div class="duel__bear">
+            <p class="duel__side">BEAR</p>
+            <p class="copy text-[#2C3242] mt-2">
+              That spike failed to close above the
+              <button type="button" class="fig" data-trace="boll_ub" aria-expanded="false" aria-controls="tr-ledger">upper Bollinger Band</button>,
+              and since then
+              <button type="button" class="fig" data-trace="macdh" aria-expanded="false" aria-controls="tr-ledger">MACD histogram compressed from 41.56 to 27.98</button>
+              for four straight sessions. Momentum cooling after a failed breakout.
+            </p>
+          </div>
+        </div>
+
+        <div class="duel">
+          <p class="duel__topic">The affiliate news</p>
+          <div class="duel__bull">
+            <p class="duel__side">BULL</p>
+            <p class="copy text-[#2C3242] mt-2">
+              Siemens Energy India posting +69.6% PAT at a 23.6% margin is the electrification and
+              data-centre capex cycle showing up in the same Siemens ecosystem.
+            </p>
+          </div>
+          <div class="duel__bear">
+            <p class="duel__side">BEAR</p>
+            <p class="copy text-[#2C3242] mt-2">
+              Those are not SIEMENS.NS cash flows. You are paying Siemens Ltd's multiple for Siemens
+              AG's narrative. The &#8377;263 crore RVNL order is about 1.4% of quarterly revenue.
+            </p>
+          </div>
+        </div>
+
+        <div class="duel">
+          <p class="duel__topic">Leadership churn</p>
+          <div class="duel__bull">
+            <p class="duel__side">BULL</p>
+            <p class="copy text-[#2C3242] mt-2">
+              Leadership transitions alongside a major divestment usually signal strategic focus, not
+              dysfunction. No allegations, no pledging issues appeared.
+            </p>
+          </div>
+          <div class="duel__bear">
+            <p class="duel__side">BEAR</p>
+            <p class="copy text-[#2C3242] mt-2">
+              A director resignation filed 12 August and a management change filed 11 August, in the
+              same week as a weak core print. That is execution risk at the worst possible moment.
+            </p>
+          </div>
+        </div>
+
+        <div class="duel">
+          <p class="duel__topic">The alternative</p>
+          <div class="duel__bull">
+            <p class="duel__side">BULL</p>
+            <p class="copy text-[#2C3242] mt-2">
+              What is the bear's alternative? Sit out the single strongest Indian industrial capex
+              upcycle in a decade?
+            </p>
+          </div>
+          <div class="duel__bear">
+            <p class="duel__side">BEAR</p>
+            <p class="copy text-[#2C3242] mt-2">
+              No. I would buy ABB, Hitachi Energy, or GE Vernova on better relative momentum. Just not
+              SIEMENS.NS at 3,900 with a shrinking core.
+            </p>
+          </div>
+        </div>
+
+        <div class="trace" id="tr-ledger" data-trace-panel></div>
+      </div>
+
+      <div class="mt-10 rounded-2xl bg-[#F4F6FB] border border-[#DCE5F5] p-5 lg:p-6">
+        <p class="font-tight font-extrabold text-[#010101] text-lg">The research manager ruled: the bear wins on margins. Trim, do not exit.</p>
+        <p class="copy text-[#5A6070] mt-2 measure">
+          The bull never really answered the core charge. Exiting a lower-margin motors business
+          should have lifted margins. Instead gross margin compressed to 26.2% from 30.7%, adjusted
+          PAT fell about 18&ndash;19%, and EBITDA fell about 17%. The franchise quality is not in
+          dispute. The current P&amp;L is.
+        </p>
+        <p class="src mt-4">Research manager &middot; 629 words &middot; bull 411, bear 460</p>
+      </div>
+    </section>
+
+    <!-- ═══ THE RISK PANEL ═══ -->
+    <section id="risk" class="mt-8 rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9">
+      <h2 class="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">The risk panel</h2>
+      <p class="copy text-[#6F6F6F] mt-1 measure">
+        Three analysts reviewed the trader's plan. All three said hold. They disagreed on every
+        number that matters.
+      </p>
+
+      <div class="overflow-x-auto mt-7">
+        <table class="rk">
+          <caption class="sr-only">Trim size, invalidation level and re-entry rule proposed by each risk analyst</caption>
+          <thead>
+            <tr>
+              <th scope="col"><span class="sr-only">Parameter</span></th>
+              <th scope="col"><span class="rk__who">Aggressive</span></th>
+              <th scope="col" class="rk__adopted"><span class="rk__who">Neutral</span><br><span class="rk__tag">MANAGER TOOK THIS</span></th>
+              <th scope="col"><span class="rk__who">Conservative</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row" class="rk__row">TRIM</th>
+              <td class="rk__val">25&ndash;30% into &#8377;4,041&ndash;4,100</td>
+              <td class="rk__val rk__adopted">25&ndash;30%, only into &#8377;4,041&ndash;4,100 strength</td>
+              <td class="rk__val">30&ndash;40% into &#8377;4,041&ndash;4,100</td>
+            </tr>
+            <tr>
+              <th scope="row" class="rk__row">INVALIDATION</th>
+              <td class="rk__val">Close below &#8377;3,736 on rising volume</td>
+              <td class="rk__val rk__adopted">Close below &#8377;3,736 on rising volume, and no close below &#8377;3,650</td>
+              <td class="rk__val">Hard stop much closer, near &#8377;3,860&ndash;3,830</td>
+            </tr>
+            <tr>
+              <th scope="row" class="rk__row">RE-ENTRY</th>
+              <td class="rk__val">Ladder at &#8377;3,736 and &#8377;3,500&ndash;3,550</td>
+              <td class="rk__val rk__adopted">Same ladder, smaller size, only on volume confirmation</td>
+              <td class="rk__val">None at &#8377;3,736 until margin stabilises</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-6 mt-9">
+        <div>
+          <p class="duel__side" style="color:var(--navy)">AGGRESSIVE</p>
+          <p class="copy text-[#3A4152] mt-2">
+            That margin squeeze is a project-mix and one-off distortion, not a franchise fracture.
+            Revenue is still growing 15%. Trimming into strength and laddering back lower is not
+            bearish, it is buying lower and getting paid to wait.
+          </p>
+        </div>
+        <div>
+          <p class="duel__side" style="color:var(--accent-1)">NEUTRAL</p>
+          <p class="copy text-[#3A4152] mt-2">
+            A stop at 3,860&ndash;3,830 ignores an
+            <button type="button" class="fig" data-trace="atr" aria-expanded="false" aria-controls="tr-risk">ATR of roughly &#8377;103</button>.
+            A normal whipsaw would trigger it before the thesis plays out. Neither optimistic nor
+            fearful: sustainable.
+          </p>
+        </div>
+        <div>
+          <p class="duel__side" style="color:#1B6FA8">CONSERVATIVE</p>
+          <p class="copy text-[#3A4152] mt-2">
+            Revenue growth of 15% is profitless growth. Waiting for
+            <button type="button" class="fig" data-trace="boll" aria-expanded="false" aria-controls="tr-risk">&#8377;3,736</button>
+            on rising volume is too late. By then the
+            <button type="button" class="fig" data-trace="sma50" aria-expanded="false" aria-controls="tr-risk">50-day at &#8377;3,650</button>
+            is exposed.
+          </p>
+        </div>
+      </div>
+      <div class="trace" id="tr-risk" data-trace-panel data-trace-scope></div>
+
+      <p class="copy text-[#5A6070] mt-8 measure">
+        The portfolio manager rejected the conservative stop as too tight, on the grounds that it
+        would close a position on a normal ATR-sized whipsaw, and adopted the neutral rule instead.
+      </p>
+    </section>
+
+    <!-- ═══ THE FULL RECORD ═══ -->
+    <section id="record" class="mt-8 rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9">
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 class="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">The full record</h2>
+        <p class="font-tight font-bold text-sm text-[#676D80] tabular-nums">10 of 10 &middot; 11,375 words</p>
+      </div>
+      <p class="copy text-[#6F6F6F] mt-1 measure">
+        Bar length is the real length of each document, so a long report never looks like a short
+        one. Open any row to read it.
+      </p>
+
+      <div class="mt-6" data-reports>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-market">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Market</span>
+          <span class="rep__w">747 words</span>
+          <span class="rep__bar"><i style="--len:.25"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-market" role="region" aria-label="Market report">
+          <div class="rep__doc">
+            <p><strong>Trend verdict: uptrend intact, buy on dips</strong> (constructive pullback, momentum cooling).</p>
+            <p>Price closed at 3,914.30, below the Aug 4 swing high of 4,000.50 but still 1.4% above the 10 EMA (3,860.80), 7.2% above the 50 SMA (3,649.99), and 16.5% above the 200 SMA (3,359.36). The medium and long-term trend structure is firmly bullish; the current action is a shallow, volume-drying pullback within that uptrend, not a reversal.</p>
+            <p><strong>close_50_sma (3,649.99)</strong> is the primary trend anchor. Price holding about 7% above it confirms the intermediate uptrend; a decisive break back below it would be the first structural warning.</p>
+            <p><strong>close_10_ema (3,860.80)</strong> is the short-term support and fair-value line. The pullback is testing the 3,861&ndash;3,905 zone, which is the first dip-buy trigger area.</p>
+            <p class="rep__more">Opening extract. The full report also carries the verified OHLCV snapshot, the ten-session indicator trend and thirty rows of recent closes that every figure on this page traces back to.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-fundamentals">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Fundamentals</span>
+          <span class="rep__w">1,700 words</span>
+          <span class="rep__bar"><i style="--len:.56"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-fundamentals" role="region" aria-label="Fundamentals report">
+          <div class="rep__doc">
+            <p><strong>Fundamental verdict: hold.</strong> Siemens Limited is a net-cash industrial-quality franchise, but at about &#8377;4,022, near its &#8377;4,098 52-week high, the market is pricing a re-acceleration the last two quarterly prints do not confirm.</p>
+            <p><strong>Growth versus margins.</strong> FY25 revenue was &#8377;17,364 cr, up 16.2% year on year from a lower FY24 base. Gross margin improved to about 30.5% from 29.1%, but normalised EBITDA margin fell to about 14.9% from 18.1% and operating margin to 9.9% from 12.0%. In the latest Q2 FY26, revenue rose 14.6% to &#8377;4,618 cr, but gross margin compressed to 26.2% from 30.7%. The quarter is margin-negative, not a turnaround.</p>
+            <p><strong>Cash and leverage.</strong> FY25 operating cash flow collapsed to &#8377;375 cr from &#8377;1,655 cr, and free cash flow was negative &#8377;6 cr against positive &#8377;1,312 cr. Total debt is &#8377;145 cr against cash and short-term investments of &#8377;6,986 cr, so net cash is about &#8377;6,840 cr.</p>
+            <p class="rep__more">Opening extract. The analyst flags that the overview's 2.21x debt-to-equity cannot be reconciled with the statements and works from the statement-derived figure instead.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-news">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>News</span>
+          <span class="rep__w">2,551 words</span>
+          <span class="rep__bar"><i style="--len:.84"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-news" role="region" aria-label="News report">
+          <div class="rep__doc">
+            <p>Siemens Limited's Q1 FY27 headline PAT of &#8377;2,143 crore, up 407% year on year, is almost entirely a one-off: a &#8377;2,099 crore gain from the sale of its Low Voltage Motors business, while core adjusted profit fell about 18&ndash;19% and EBITDA dropped about 17% on cost pressure.</p>
+            <p><strong>Exchange filing, 12 Aug 2026.</strong> Resignation of a director. Leadership churn disclosed by the company. A filing wins over any news date.</p>
+            <p><strong>Exchange filing, 11 Aug 2026.</strong> Board approved Q1 FY27 results; a change in management and shareholders' meeting notices were filed the same day.</p>
+            <p><strong>Exchange filing, 29 Jul 2026.</strong> &#8377;18 per share dividend corporate action, against &#8377;12 in January 2025 and &#8377;10 before that.</p>
+            <p class="rep__more">Opening extract. Sources are labelled by type throughout, and one social-wire item carrying the EBITDA figure is marked uncorroborated rather than folded into the record.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-sentiment">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Sentiment</span>
+          <span class="rep__w">3,028 words</span>
+          <span class="rep__bar"><i style="--len:1"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-sentiment" role="region" aria-label="Sentiment report">
+          <div class="rep__doc">
+            <p><strong>Overall sentiment: mixed.</strong> Score 5.0 out of 10. Confidence: medium. Window: 13 July to 12 August 2026.</p>
+            <p>The single dominant event in the window is the Q1 FY27 result, and the news framing is genuinely split. Positive framing: "Net profit jumps to &#8377;2,143 crore, revenue rises 15%". Negative framing: "&#8377;2,143 cr profit hides 19% core drop", "profit declines 18% to &#8377;343 cr", and "Siemens Ltd eases for fifth straight session".</p>
+            <p>Outside the results the news flow is predominantly positive and theme-driven: a $185M Georgia plant, more than $200M in US AI-infrastructure manufacturing, and a &#8377;263 cr rail-electrification order.</p>
+            <p class="rep__more">Opening extract. The analyst caveats that several of these items concern Siemens Energy or Siemens AG rather than Siemens Ltd India, which is the same distinction the bear pressed in the debate.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-bull">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Bull case</span>
+          <span class="rep__w">411 words</span>
+          <span class="rep__bar"><i style="--len:.14"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-bull" role="region" aria-label="Bull case">
+          <div class="rep__doc">
+            <p><strong>Buy SIEMENS.NS on this dip.</strong> The bear case is a rearview-mirror reading of one adjusted metric while ignoring the transformation, order book, and tape.</p>
+            <p>You call Q1 a core miss. I call it restructuring noise. The &#8377;2,099 crore LVM gain is a &#8377;22 billion slump-sale completion that leaves Siemens Limited net cash at roughly &#8377;6,840 crore. Adjusted PAT fell because the company deliberately exited a lower-margin motors business.</p>
+            <p>Meanwhile revenue grew 15% to &#8377;4,714 crore. On valuation: yes, about 93x trailing looks rich. But you are capitalising the old, ex-growth continuing EPS while ignoring the new Siemens, a leaner electrification pure-play.</p>
+            <p class="rep__more">Opening extract of the full 411-word argument.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-bear">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Bear case</span>
+          <span class="rep__w">460 words</span>
+          <span class="rep__bar"><i style="--len:.15"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-bear" role="region" aria-label="Bear case">
+          <div class="rep__doc">
+            <p><strong>Do not buy this dip.</strong> This is a 93x earnings story with a shrinking core, and the bull is asking you to pay a growth multiple for a one-time divestment gain.</p>
+            <p>You call the LVM sale portfolio engineering. Fine. Then explain why the engineered company is less profitable: adjusted PAT fell about 18&ndash;19% to &#8377;343 crore, EBITDA fell about 17% to &#8377;431 crore, and gross margin compressed to 26.2% from 30.7%.</p>
+            <p>Your net cash figure is real, but it is not a growth engine at 93x trailing continuing EPS. FY25 free cash flow was negative &#8377;6 crore, and operating cash flow collapsed from &#8377;1,655 crore to &#8377;375 crore.</p>
+            <p class="rep__more">Opening extract of the full 460-word rebuttal.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-plan">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Investment plan</span>
+          <span class="rep__w">629 words</span>
+          <span class="rep__bar"><i style="--len:.21"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-plan" role="region" aria-label="Investment plan">
+          <div class="rep__doc">
+            <p><strong>Recommendation: underweight.</strong></p>
+            <p>Let's be honest about what this debate actually settled. The bull's structural case is real: Siemens Limited is a dominant incumbent at the centre of India's electrification, grid-modernisation, rail and data-centre capex cycle. Nobody disputes the franchise quality.</p>
+            <p>But the bull never really answered the bear's core charge, and that is what tips this. Exiting a lower-margin motors business should have lifted margins. Instead gross margin compressed to 26.2% from 30.7%. That is not noise; it is the core P&amp;L under pressure right now.</p>
+            <p class="rep__more">Opening extract. The plan closes on the valuation: at about 93x trailing, the bull is capitalising a forward re-acceleration that is not in the numbers yet.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-trader">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Trader plan</span>
+          <span class="rep__w">204 words</span>
+          <span class="rep__bar"><i style="--len:.07"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-trader" role="region" aria-label="Trader plan">
+          <div class="rep__doc">
+            <p><strong>Action: hold.</strong></p>
+            <p>Hold, and stay underweight. The bear's near-term case wins on the data: gross margin compressed to 26.2% from 30.7%, adjusted PAT and EBITDA down about 17&ndash;19%, operating cash flow collapsed from &#8377;1,655 cr to &#8377;375 cr, all while the stock trades at about 93x trailing earnings. That is exactly the multiple that gets punished first when FII flows turn.</p>
+            <p><strong>Position sizing.</strong> Target net exposure at roughly half of a full-weight position. Trim 25&ndash;30% into the &#8377;4,041&ndash;4,100 resistance zone. Hard risk rule: a close below &#8377;3,736 on rising volume triggers full exit of the retained core.</p>
+            <p class="rep__more">This is the complete plan in substance. It is the shortest document in the run at 204 words.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-risk">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Risk debate</span>
+          <span class="rep__w">1,087 words</span>
+          <span class="rep__bar"><i style="--len:.36"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-risk" role="region" aria-label="Risk debate">
+          <div class="rep__doc">
+            <p><strong>Aggressive.</strong> Hold is the aggressive right trade because it refuses the two loser outcomes: staying fully exposed into a cooling momentum tape, or selling the entire compounder ahead of the greatest industrial capex cycle India has ever run.</p>
+            <p><strong>Conservative.</strong> The trader's hold is only acceptable if we treat it as a risk-reduction plan, not as permission to keep a core position at roughly 93x trailing earnings. I would tighten it further: trim 30&ndash;40%, place the hard stop much closer near 3,860&ndash;3,830.</p>
+            <p><strong>Neutral.</strong> Hold, but treat it as a risk-managed underweight, not a conviction long and not a de-risking panic. Do not make the stop so tight that a normal ATR-sized shakeout knocks you out.</p>
+            <p class="rep__more">Opening extract of each speaker. The comparison above pulls the three positions into one view.</p>
+          </div>
+        </div>
+
+        <button type="button" class="rep" aria-expanded="false" aria-controls="doc-final">
+          <span class="rep__t"><svg class="rep__chev" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Final decision</span>
+          <span class="rep__w">558 words</span>
+          <span class="rep__bar"><i style="--len:.18"></i></span>
+        </button>
+        <div class="rep__panel" id="doc-final" role="region" aria-label="Final decision">
+          <div class="rep__doc">
+            <p><strong>Rating: underweight.</strong> Time horizon: 3 to 6 months.</p>
+            <p>The debate settles on the bear's near-term fundamental and valuation case while conceding the bull's long-term franchise quality. The consensus, including the trader's hold, is really a risk-managed underweight, not a conviction hold.</p>
+            <p>I do not escalate to sell because the countervailing evidence is real: SIEMENS.NS is a net-cash franchise at the centre of India's electrification and data-centre capex supercycle, with 15% revenue growth and a fresh order tape.</p>
+            <p><strong>Re-rating to overweight requires</strong> a quarter with gross margin recovery toward 30%, operating cash flow recoupled to net income, and positive free cash flow.</p>
+            <p class="rep__more">Opening extract. The manager also rejects the conservative analyst's tighter stop by name, as too tight against a normal ATR-sized whipsaw.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═══ EVIDENCE STORE ═══
+         Every entry is a value the agents were handed before they reasoned,
+         copied from the run's pre-fetched snapshot blocks. Nothing here is
+         derived, rounded for effect, or written to support a claim.
+
+         Scope note: only figures that reconcile cleanly against a pre-fetched
+         block get an entry. The margin figures (26.2% from 30.7%) and the
+         receivables total are left as attributed claims, because the
+         fundamentals report and the debate quote different receivable numbers,
+         and a "verified" badge on an unreconciled figure would be the exact
+         failure this product exists to prevent. -->
+    <section class="trace-store mt-8 rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9" data-trace-store>
+      <h2 class="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">The values behind the figures</h2>
+      <p class="copy text-[#6F6F6F] mt-1 measure">
+        Each figure in the argument above traces to one of these. They are the pre-fetched
+        values the agents read, not a restatement of what the agents concluded.
+      </p>
+
+      <div data-trace-entry="boll_ub">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">boll_ub, upper Bollinger Band, 2026-08-10</p>
+          <p class="trace__v">4,040.8110</p>
+          <p class="trace__note">The &#8377;4,041&ndash;4,100 resistance zone in the plan is this band. Price failed to close above it on 4 August.</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="boll">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">boll, Bollinger middle band, 2026-08-10</p>
+          <p class="trace__v">3,736.4637</p>
+          <p class="trace__note">The &#8377;3,736 invalidation level is this line. It sits about one ATR below the 3,860 support the bull wanted to buy.</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="rsi">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">rsi, 14-period, 2026-08-10</p>
+          <p class="trace__v">66.1829</p>
+          <p class="trace__note">Both sides quote this. The bull reads the fall from 76 as overbought unwinding; the bear reads 66 as still elevated.</p>
+          <p class="trace__series">10 sessions, oldest to newest: 55.91, 54.45, 55.27, 64.13, 72.30, 76.45, 74.02, 70.70, 69.28, 66.18</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="macdh">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">macdh, MACD histogram, 2026-08-10</p>
+          <p class="trace__v">27.9794</p>
+          <p class="trace__note">The "four straight sessions of compression" is literally the last four values of this series.</p>
+          <p class="trace__series">Last four sessions: 41.5638, 39.4747, 34.8763, 27.9794</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="atr">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">atr, average true range, 2026-08-10</p>
+          <p class="trace__v">103.5352</p>
+          <p class="trace__note">The neutral analyst used this to reject the conservative stop at 3,860&ndash;3,830, roughly one ATR from the price.</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="sma50">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">close_50_sma, 2026-08-10</p>
+          <p class="trace__v">3,649.9898</p>
+          <p class="trace__note">The 50-day the conservative analyst says is exposed once 3,736 gives way.</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="aug4">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">Recent closes, 2026-08-04</p>
+          <p class="trace__v">4,000.5000</p>
+          <p class="trace__note">Volume 1,107,988. The highest close and the heaviest volume in the 30 rows supplied.</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="vol">
+        <div class="trace__in">
+          <p class="trace__src">MARKET ANALYST &middot; VERIFIED SNAPSHOT</p>
+          <p class="trace__k">Recent closes, volume on 6 and 10 August</p>
+          <p class="trace__v">213,389 / 261,301</p>
+          <p class="trace__note">The "quiet dip" volumes. Both are roughly a fifth of the 4 August spike.</p>
+        </div>
+      </div>
+
+      <div data-trace-entry="fcf">
+        <div class="trace__in">
+          <p class="trace__src">FUNDAMENTALS ANALYST &middot; PRE-FETCHED CASH FLOW</p>
+          <p class="trace__k">FY25 free cash flow</p>
+          <p class="trace__v">&minus;&#8377;6 cr</p>
+          <p class="trace__note">Against positive &#8377;1,312 cr the prior year. Operating cash flow over the same period fell from &#8377;1,655 cr to &#8377;375 cr.</p>
+        </div>
+      </div>
+    </section>
+
+    <p class="copy text-[#676D80] mt-6 measure">
+      Research, not advice. Bench shows the evidence and both sides of the argument.
+      The decision stays yours.
+    </p>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.documentElement;
+
+  /* Arm the collapsed state. Until this runs, every panel is open and every
+     traced value is on the page, so a reader without JS loses interaction,
+     never content. */
+  root.classList.add('js-armed');
+  document.querySelectorAll('.rep[aria-expanded]').forEach(function (b) {
+    b.setAttribute('aria-expanded', 'false');
+  });
+
+  function setHeight(panel) {
+    panel.style.maxHeight = panel.scrollHeight + 'px';
+  }
+
+  /* ── Evidence traces ────────────────────────────────────────────────
+     The values live in the document, in [data-trace-store]. Clicking a
+     figure clones the matching entry into the nearest panel, so there is
+     one source of truth and no evidence hidden inside a script. */
+  var store = document.querySelector('[data-trace-store]');
+
+  function closeAllTraces() {
+    document.querySelectorAll('.fig[aria-expanded="true"]').forEach(function (b) {
+      b.setAttribute('aria-expanded', 'false');
+    });
+    document.querySelectorAll('[data-trace-panel]').forEach(function (p) {
+      p.style.maxHeight = '';
+      p.innerHTML = '';
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var fig = e.target.closest && e.target.closest('.fig');
+    if (!fig || !store) return;
+
+    var panel = document.getElementById(fig.getAttribute('aria-controls'));
+    var entry = store.querySelector('[data-trace-entry="' + fig.getAttribute('data-trace') + '"]');
+    if (!panel || !entry) return;
+
+    var wasOpen = fig.getAttribute('aria-expanded') === 'true';
+    closeAllTraces();               // one trace open at a time, page-wide
+
+    if (!wasOpen) {
+      fig.setAttribute('aria-expanded', 'true');
+      panel.innerHTML = entry.innerHTML;
+      setHeight(panel);
+    }
+  });
+
+  /* ── Report disclosure ──────────────────────────────────────────────
+     max-height rather than grid-template-rows (DESIGN.md §5: Chrome cannot
+     interpolate 0fr→1fr in an auto-height grid). The inner .rep__doc is
+     capped and scrolls, so a 3,000-word report opens to the same height as
+     a 200-word one. */
+  var reports = document.querySelector('[data-reports]');
+  if (reports) {
+    reports.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('.rep');
+      if (!btn || btn.classList.contains('is-pending')) return;
+
+      var panel = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!panel) return;
+
+      var open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (open) { panel.style.maxHeight = ''; } else { setHeight(panel); }
+    });
+  }
+
+  /* Re-measure open panels when a reflow changes the height of their text. */
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      document.querySelectorAll('.rep[aria-expanded="true"]').forEach(function (btn) {
+        var p = document.getElementById(btn.getAttribute('aria-controls'));
+        if (p) { p.style.maxHeight = 'none'; setHeight(p); }
+      });
+      document.querySelectorAll('[data-trace-panel]').forEach(function (p) {
+        if (p.firstChild) { p.style.maxHeight = 'none'; setHeight(p); }
+      });
+    }, 150);
+  });
+})();
+</script>
+
+</body>
+</html>
