@@ -19,9 +19,13 @@ test('search queues a run and shows the verdict once it completes', async ({ pag
   // Scoped to the Verdict summary section: the completed run's report prose
   // mentions "Underweight" many more times, which makes an unscoped
   // getByText('Underweight') ambiguous (strict-mode violation) once the
-  // full page has rendered.
+  // full page has rendered. The real TheCall card (Task 9, ported from
+  // web/design/research/index.html) never prints the rating in its original
+  // case — it only ever appears as an uppercase ruler label
+  // (RATING_STOPS.map -> stop.toUpperCase()) — so this asserts against that
+  // uppercase text instead of the old placeholder's case-preserved <dd>.
   await expect(
-    page.getByLabel('Verdict summary').getByText('Underweight', { exact: true }),
+    page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true }),
   ).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole('status')).toHaveCount(0);
 });

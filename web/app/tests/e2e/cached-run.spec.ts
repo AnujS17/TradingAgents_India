@@ -19,9 +19,11 @@ test('an existing analysis comes back instantly and is marked cached', async ({ 
   await expect(page).toHaveURL(/\/runs\/run-completed\?cached=1$/, { timeout: 20000 });
 
   // Straight to the verdict — no queued/running banner, because nothing was
-  // queued.
+  // queued. TheCall (Task 9) only ever prints the rating as an uppercase
+  // ruler label (RATING_STOPS.map -> stop.toUpperCase()), never in its
+  // original case — see the same note in search-to-result.spec.ts.
   await expect(
-    page.getByLabel('Verdict summary').getByText('Underweight', { exact: true }),
+    page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true }),
   ).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole('status')).toHaveCount(0);
 });

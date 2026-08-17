@@ -40,7 +40,16 @@ export function TheCall({ verdict }: { verdict: Verdict | null }) {
   const showLevelsExplanation = entryIsNull || stopIsNull;
 
   return (
-    <section id="call" aria-label="The call" className="rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9">
+    // aria-label is "Verdict summary", not the visible "The call" heading:
+    // this is the pre-existing accessible name from the old placeholder
+    // VerdictSummary (web/app/src/components/VerdictSummary.tsx, since
+    // deleted), which three already-reviewed E2E specs
+    // (search-to-result/cached-run/rate-limit.spec.ts) locate via
+    // `page.getByLabel('Verdict summary')`. The design source
+    // (web/design/research/index.html) has no aria-label on this section at
+    // all, so there is no design intent being overridden here, and renaming
+    // it to echo the visible h2 would be a redundant a11y label besides.
+    <section id="call" aria-label="Verdict summary" className="rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">The call</h2>

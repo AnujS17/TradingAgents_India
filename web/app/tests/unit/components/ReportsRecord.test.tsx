@@ -1,13 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { ReportsAccordion } from '@/components/ReportsAccordion';
+import { ReportsRecord } from '@/components/research/ReportsRecord';
 import type { Reports } from '@/lib/api-client/client';
 
-// `ReportsAccordion` is now a thin re-export of `ReportsRecord` (Task 10) —
-// see web/app/src/components/ReportsAccordion.tsx. These tests exercise it
-// through the old import path since that's still what RunView.tsx uses.
-
-describe('ReportsAccordion (ReportsRecord)', () => {
+describe('ReportsRecord', () => {
   it('renders only the sections that actually have prose, not all ten', () => {
     const reports: Reports = {
       final_decision: 'The final call.',
@@ -17,7 +13,7 @@ describe('ReportsAccordion (ReportsRecord)', () => {
       news: '',
     };
 
-    const { container } = render(<ReportsAccordion reports={reports} />);
+    const { container } = render(<ReportsRecord reports={reports} />);
 
     expect(container.querySelectorAll('.rep')).toHaveLength(3);
     expect(screen.getByText('Final decision')).toBeInTheDocument();
@@ -34,7 +30,7 @@ describe('ReportsAccordion (ReportsRecord)', () => {
       market: 'The market read.',
     };
 
-    const { container } = render(<ReportsAccordion reports={reports} />);
+    const { container } = render(<ReportsRecord reports={reports} />);
     const rows = Array.from(container.querySelectorAll('.rep'));
 
     // REPORT_ORDER puts final_decision first, ahead of bull_case and market.
@@ -46,7 +42,7 @@ describe('ReportsAccordion (ReportsRecord)', () => {
   it('falls back to nothing open when final_decision is missing', () => {
     const reports: Reports = { market: 'The market read.', bull_case: 'The bull case.' };
 
-    const { container } = render(<ReportsAccordion reports={reports} />);
+    const { container } = render(<ReportsRecord reports={reports} />);
     const rows = Array.from(container.querySelectorAll('.rep'));
 
     expect(rows).toHaveLength(2);
@@ -55,7 +51,7 @@ describe('ReportsAccordion (ReportsRecord)', () => {
   });
 
   it('renders nothing when there are no reports at all', () => {
-    const { container } = render(<ReportsAccordion reports={null} />);
+    const { container } = render(<ReportsRecord reports={null} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -67,7 +63,7 @@ describe('ReportsAccordion (ReportsRecord)', () => {
       market: 'one two three four',
     };
 
-    const { container } = render(<ReportsAccordion reports={reports} />);
+    const { container } = render(<ReportsRecord reports={reports} />);
     const bars = Array.from(container.querySelectorAll<HTMLElement>('.rep__bar i'));
 
     expect(bars).toHaveLength(2);
@@ -79,7 +75,7 @@ describe('ReportsAccordion (ReportsRecord)', () => {
   it('resolves bar length to a full-width bar, not NaN, when only one report is present', () => {
     const reports: Reports = { final_decision: 'one two three' };
 
-    const { container } = render(<ReportsAccordion reports={reports} />);
+    const { container } = render(<ReportsRecord reports={reports} />);
     const bar = container.querySelector<HTMLElement>('.rep__bar i');
 
     expect(bar).not.toBeNull();

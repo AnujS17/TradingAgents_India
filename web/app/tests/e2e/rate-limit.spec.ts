@@ -27,5 +27,8 @@ test('a 429 shows the server message, and cached reads keep working', async ({ p
   const href = await cachedRunLink.getAttribute('href');
   await cachedRunLink.click();
   await expect(page).toHaveURL(new RegExp(`${href!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
-  await expect(page.getByLabel('Verdict summary').getByText('Underweight', { exact: true })).toBeVisible();
+  // TheCall (Task 9) only ever prints the rating as an uppercase ruler label
+  // (RATING_STOPS.map -> stop.toUpperCase()), never in its original case —
+  // see the same note in search-to-result.spec.ts.
+  await expect(page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true })).toBeVisible();
 });

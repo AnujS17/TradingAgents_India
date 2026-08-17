@@ -1,13 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-// `VerdictSummary` is now a thin re-export of `TheCall` (see
-// src/components/VerdictSummary.tsx) — exercised through that name here
-// since RunView.tsx still imports it under this name until Task 11 switches
-// the call site over to `TheCall` directly.
-import { VerdictSummary } from '@/components/VerdictSummary';
+import { TheCall } from '@/components/research/TheCall';
 import type { Verdict } from '@/lib/api-client/client';
 
-describe('VerdictSummary (TheCall)', () => {
+describe('TheCall', () => {
   it('renders null entry_price/stop_loss as "Not set", never ₹0', () => {
     const verdict: Verdict = {
       rating: 'Underweight',
@@ -16,7 +12,7 @@ describe('VerdictSummary (TheCall)', () => {
       levels: { action: 'Hold', entry_price: null, stop_loss: null, position_sizing: null },
     };
 
-    render(<VerdictSummary verdict={verdict} />);
+    render(<TheCall verdict={verdict} />);
 
     // ENTRY and STOP are the two price fields this component renders (see
     // TheCall's stat grid) — both must read "Not set", never a fabricated ₹0.
@@ -33,7 +29,7 @@ describe('VerdictSummary (TheCall)', () => {
       levels: { action: 'Hold', entry_price: 480, stop_loss: 440, position_sizing: '2% of portfolio' },
     };
 
-    render(<VerdictSummary verdict={verdict} />);
+    render(<TheCall verdict={verdict} />);
 
     // Action renders as its own stat-grid value.
     expect(screen.getByText('Hold')).toBeInTheDocument();

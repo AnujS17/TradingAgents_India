@@ -24,15 +24,16 @@ export default async function RunPage({
     throw error;
   }
 
+  // RunView (Task 11) now owns the full page shell itself (ResearchNav,
+  // RunHeader — which renders its own <h1>{ticker} — and a <main> landmark
+  // around the completed-run content, matching HomePage's flat
+  // nav/main/footer pattern), so this route no longer wraps it in its own
+  // <main><h1> — that wrapper predates RunView owning page chrome and would
+  // otherwise nest two <main> landmarks and duplicate the ticker heading.
   return (
-    <main>
-      <h1>
-        {run.ticker} — {run.analysis_date}
-      </h1>
-      <RunView
-        initialRun={run}
-        estimatedSeconds={Number.isFinite(estimatedSeconds) && estimatedSeconds > 0 ? estimatedSeconds : undefined}
-      />
-    </main>
+    <RunView
+      initialRun={run}
+      estimatedSeconds={Number.isFinite(estimatedSeconds) && estimatedSeconds > 0 ? estimatedSeconds : undefined}
+    />
   );
 }

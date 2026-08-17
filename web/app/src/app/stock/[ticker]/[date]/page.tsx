@@ -30,12 +30,7 @@ export default async function StockPage({
     );
   }
 
-  return (
-    <main>
-      <h1>
-        {run.ticker} — {run.analysis_date}
-      </h1>
-      <RunView initialRun={run} />
-    </main>
-  );
+  // RunView (Task 11) now owns the full page shell itself (see the same
+  // note in runs/[id]/page.tsx) — no separate <main><h1> wrapper here.
+  return <RunView initialRun={run} />;
 }
