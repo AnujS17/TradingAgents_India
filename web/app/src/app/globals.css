@@ -419,6 +419,45 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 [data-motion-gate].is-onscreen .viz-flip i,
 [data-motion-gate].is-onscreen .viz-reports i::after { animation-play-state: running; }
 
+/* ── Live-run panel — landing-fintech/index.html lines 261-278 (Task 6,
+   #live section). The panel's progress fill joins the same shared
+   [data-motion-gate] pair as the hero ribbons and deck loops above, so it
+   doesn't loop forever off screen. ───────────────────────────────────── */
+.run-list { display:flex; flex-direction:column; gap:9px; }
+.run-row { display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:12px;
+  background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.07); }
+.run-dot { width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.22); flex:none; }
+.run-name { font-size:.8rem; color:rgba(255,255,255,.62); flex:1; }
+.run-state { font-size:.68rem; color:rgba(255,255,255,.38); font-family:'Inter Tight',sans-serif; font-weight:700; }
+.run-row.is-done .run-dot  { background:#3DA2F1; box-shadow:0 0 0 4px rgba(61,162,241,.16); }
+.run-row.is-done .run-name { color:rgba(255,255,255,.85); }
+.run-row.is-done .run-state{ color:#7FC4FF; }
+.run-row.is-live { border-color:rgba(61,162,241,.4); background:rgba(28,111,230,.1); }
+.run-row.is-live .run-dot  { background:#7FC4FF; box-shadow:0 0 0 4px rgba(127,196,255,.16); }
+.run-row.is-live .run-name { color:#fff; }
+.run-row.is-live .run-state{ color:#7FC4FF; }
+.run-bar { height:5px; border-radius:5px; background:rgba(255,255,255,.1); overflow:hidden; }
+.run-bar span { display:block; height:100%; border-radius:5px;
+  background:linear-gradient(90deg,#1C6FE6,#7FC4FF); animation: runFill 6s cubic-bezier(.4,0,.3,1) infinite; }
+@keyframes runFill { 0%{width:8%} 55%{width:46%} 100%{width:8%} }
+
+[data-motion-gate] .run-bar span { animation-play-state: paused; }
+[data-motion-gate].is-onscreen .run-bar span { animation-play-state: running; }
+
+/* ── FAQ accordion — landing-fintech/index.html lines 118-130 (Task 6,
+   #faq section). Class-driven max-height, not grid-template-rows: Chrome
+   cannot interpolate 0fr->1fr in an auto-height grid, and the half-finished
+   transition stays "running" and pins the row at 0 forever (DESIGN.md).
+   The 420px cap is well clear of the longest answer, so nothing clips.
+   Reuses --dur-open/--ease-open (Task 1, shared with the research page's
+   .rep__panel accordion) instead of the source's hardcoded .45s/.5s so both
+   accordions move on the same clock. */
+.u-acc-body { max-height: 0; opacity: 0; overflow: hidden;
+  transition: max-height var(--dur-open) var(--ease-open), opacity var(--dur-open) var(--ease-open); }
+.u-acc.is-open .u-acc-body { max-height: 420px; opacity: 1; }
+.u-acc.is-open .u-acc-chev { transform: rotate(180deg); }
+.u-acc-chev { transition: transform var(--dur-open) var(--ease-open); }
+
 /* SVG app-screen type — real content, not placeholder bars */
 .s-mut    { font: 500 12px 'Inter', sans-serif; fill: #7B8299; letter-spacing: .06em; text-transform: uppercase; }
 .s-tick   { font: 800 22px 'Inter Tight', sans-serif; fill: #0E1730; letter-spacing: -.02em; }
