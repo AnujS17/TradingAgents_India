@@ -106,19 +106,28 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
    assumption, which does not hold for Tailwind v4's layered utilities.
    Without this, the hover border snaps instantly instead of animating.
 
-   `transition-delay` is given per-property (three comma-separated values,
-   matching the three `transition-property` entries in order) rather than
+   `box-shadow` joins the list for the same reason, added when UseCases.tsx
+   ported cards that carry `hover:shadow-[0px_4px_32px_...] transition-all
+   duration-300` (landing-fintech/index.html:919): `transition-all` is just
+   as layered as `transition-colors`, so it loses the same way, and without
+   an explicit box-shadow entry here the hover shadow would snap instead of
+   fading in over Tailwind's intended 300ms.
+
+   `transition-delay` is given per-property (four comma-separated values,
+   matching the four `transition-property` entries in order) rather than
    left as a single value: a single `var(--delay, 0s)` would repeat across
-   all three properties per the CSS shorthand-matching rule, which would
+   all four properties per the CSS shorthand-matching rule, which would
    make every hover on a card lag by that card's reveal stagger (up to
-   .24s on TrustStrip) before the border-color transition even started —
-   turning a hover micro-interaction into a sluggish one. Only the reveal's
-   own opacity/transform get the stagger; border-color always starts at 0s. */
+   .24s on TrustStrip/UseCases) before the border-color/box-shadow
+   transition even started — turning a hover micro-interaction into a
+   sluggish one. Only the reveal's own opacity/transform get the stagger;
+   border-color and box-shadow always start at 0s. */
 .u-reveal {
   transition: opacity .7s cubic-bezier(0.25,0.46,0.45,0.94),
               transform .7s cubic-bezier(0.25,0.46,0.45,0.94),
-              border-color .15s ease-out;
-  transition-delay: var(--delay, 0s), var(--delay, 0s), 0s;
+              border-color .15s ease-out,
+              box-shadow .3s cubic-bezier(0.4,0,0.2,1);
+  transition-delay: var(--delay, 0s), var(--delay, 0s), 0s, 0s;
 }
 .u-reveal.anim-ready { opacity: 0; transform: translateY(28px); }
 .u-reveal.anim-ready.is-in { opacity: 1; transform: translateY(0); }
@@ -260,6 +269,155 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
   .stack-copy  { grid-column: 1; grid-row: 3; }
   .stack-art svg { max-width: 268px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Scroll-driven horizontal deck — landing-fintech/index.html lines 132-259,
+   DESIGN.md §5 "scroll-pinned horizontal deck". `.deck-track` is translated
+   by scroll progress; see src/components/landing/Deck.tsx for the ported
+   scroll-math (source lines 1334-1387) that drives it.
+   ═══════════════════════════════════════════════════════════════════ */
+.deck-viewport { overflow: hidden; }
+.deck-track {
+  display: flex; gap: 22px; padding: 8px 0 8px 0;
+  width: max-content;
+  will-change: transform;
+  /* No transition on transform: this is scroll-linked, so the scroll position
+     already supplies continuity. A transition here restarts every frame and
+     wins over inline styles (transitions outrank even !important), which
+     silently pins the track at translate(0). DESIGN.md §4 rule 2. */
+}
+.deck-card {
+  flex: 0 0 404px;
+  border-radius: 26px;
+  border: 1px solid rgba(255,255,255,.11);
+  background-color: rgba(255,255,255,.045);
+  box-shadow: 0 18px 50px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.08);
+  padding: 26px 24px 24px;
+  display: flex; flex-direction: column;
+  min-height: 408px;
+  transition: transform .35s cubic-bezier(.22,1,.36,1), border-color .35s ease, box-shadow .35s ease;
+}
+.deck-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(61,162,241,.5);
+  box-shadow: 0 26px 64px rgba(28,111,230,.28), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.deck-icon {
+  width: 44px; height: 44px; border-radius: 13px;
+  background: linear-gradient(135deg,#00439D 0%,#1C6FE6 60%,#237FFB 100%);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 7px 24px 0 rgba(36,162,255,.16) inset; margin-bottom: 18px;
+}
+.deck-title {
+  font-family: 'Inter Tight', sans-serif; font-weight: 800; color: #fff;
+  font-size: 1.3rem; line-height: 1.15; letter-spacing: -.02em;
+}
+.deck-body { color: rgba(255,255,255,.58); font-size: .875rem; line-height: 1.65; margin-top: 10px; }
+
+/* card mini-visuals */
+.deck-viz {
+  margin-top: auto; position: relative; height: 132px;
+  border-radius: 16px; border: 1px solid rgba(255,255,255,.08);
+  background-color: rgba(0,0,0,.24); overflow: hidden;
+}
+
+/* 1 — bull vs bear pushing at a seam */
+.viz-seam { position:absolute; left:50%; top:14px; bottom:14px; width:1px;
+  background:linear-gradient(180deg,transparent,#3DA2F1,transparent); }
+.viz-bar { position:absolute; top:50%; height:26px; border-radius:7px; margin-top:-13px;
+  display:flex; align-items:center; font:800 10px/1 'Inter Tight',sans-serif; letter-spacing:.09em; color:#fff; }
+.viz-bar-l { left:14px; background:linear-gradient(90deg,#00439D,#1C6FE6); justify-content:flex-start; padding-left:9px;
+  animation: pushL 3.6s cubic-bezier(.45,0,.55,1) infinite; }
+.viz-bar-r { right:14px; background:linear-gradient(270deg,#2F86C9,#7FC4FF); justify-content:flex-end; padding-right:9px;
+  animation: pushR 3.6s cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes pushL { 0%,100%{width:38%} 50%{width:54%} }
+@keyframes pushR { 0%,100%{width:46%} 50%{width:30%} }
+
+/* 2 — figure with a source chip sliding in */
+.viz-trace { padding: 16px 16px 0; }
+.viz-sentence { color: rgba(255,255,255,.72); font-size: .8rem; line-height: 1.6; }
+.viz-figure { color:#7FC4FF; font-weight:700; border-bottom:2px dashed rgba(127,196,255,.6);
+  background:rgba(28,111,230,.16); border-radius:3px; padding:0 3px; }
+.viz-chip {
+  position:absolute; left:16px; right:16px; bottom:14px;
+  background:rgba(255,255,255,.09); border:1px solid rgba(255,255,255,.12);
+  border-radius:9px; padding:7px 10px; font-size:.68rem; color:rgba(255,255,255,.75);
+  animation: chipIn 3.8s cubic-bezier(.22,1,.36,1) infinite;
+}
+@keyframes chipIn {
+  0%,12%   { opacity:0; transform:translateY(10px); }
+  26%,72%  { opacity:1; transform:translateY(0); }
+  88%,100% { opacity:0; transform:translateY(10px); }
+}
+
+/* 3 — three runs, the last one flipping */
+.viz-runs { padding: 11px 13px; display:flex; flex-direction:column; gap:6px; justify-content:center; }
+.viz-run { display:flex; justify-content:space-between; align-items:center;
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
+  border-radius:9px; padding:6px 10px; font-size:.7rem; color:rgba(255,255,255,.6); flex:none; }
+.viz-run b { color:#fff; font-family:'Inter Tight',sans-serif; font-weight:800; }
+.viz-flip { position:relative; display:inline-block; width:34px; height:14px; overflow:hidden; }
+.viz-flip i { position:absolute; left:0; right:0; font-style:normal; text-align:right;
+  animation: flipRoll 4.2s cubic-bezier(.22,1,.36,1) infinite; }
+.viz-flip i:first-child { top:0; }
+.viz-flip i:last-child  { top:14px; color:#7FC4FF; }
+@keyframes flipRoll { 0%,38%{transform:translateY(0)} 50%,88%{transform:translateY(-14px)} 100%{transform:translateY(0)} }
+
+/* 4 — ten reports filling in */
+.viz-reports { padding:16px; display:grid; grid-template-columns:repeat(5,1fr); gap:8px; align-content:center; }
+/* The fill rides on a pseudo-element's opacity rather than animating the
+   tile's own background. Animating a gradient repaints every frame on all
+   ten tiles; opacity is composited. */
+.viz-reports i { position:relative; display:block; height:26px; border-radius:6px;
+  background:rgba(255,255,255,.09); }
+.viz-reports i::after {
+  content:""; position:absolute; inset:0; border-radius:6px;
+  background:linear-gradient(135deg,#1C6FE6,#3DA2F1); opacity:0;
+  animation: fillTile 4.4s ease-in-out infinite;
+}
+.viz-reports i:nth-child(1)::after{animation-delay:0s}    .viz-reports i:nth-child(2)::after{animation-delay:.12s}
+.viz-reports i:nth-child(3)::after{animation-delay:.24s}  .viz-reports i:nth-child(4)::after{animation-delay:.36s}
+.viz-reports i:nth-child(5)::after{animation-delay:.48s}  .viz-reports i:nth-child(6)::after{animation-delay:.6s}
+.viz-reports i:nth-child(7)::after{animation-delay:.72s}  .viz-reports i:nth-child(8)::after{animation-delay:.84s}
+.viz-reports i:nth-child(9)::after{animation-delay:.96s}  .viz-reports i:nth-child(10)::after{animation-delay:1.08s}
+@keyframes fillTile {
+  0%,8%    { opacity:0; }
+  22%,68%  { opacity:1; }
+  86%,100% { opacity:0; }
+}
+
+/* deck progress bar */
+.deck-progress { height:3px; border-radius:3px; background:rgba(255,255,255,.12); overflow:hidden; }
+.deck-progress span { display:block; height:100%; width:100%; border-radius:3px;
+  transform:scaleX(0); transform-origin:left center;
+  background:linear-gradient(90deg,#1C6FE6,#7FC4FF); }
+
+/* pinned mode only where there is room to pin */
+@media (min-width: 1024px) {
+  .deck-sticky { position: sticky; top: 64px; z-index: 1; }
+  .deck-viewport { padding-left: max(1.5rem, calc((100vw - 1280px) / 2 + 2rem)); }
+}
+@media (max-width: 1023px) {
+  .deck-viewport { overflow-x: auto; scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch; padding: 0 1.5rem; }
+  .deck-track { transform: none !important; }
+  .deck-card { scroll-snap-align: center; flex-basis: 290px; }
+}
+
+/* Ambient loops idle until #deck is on screen (DESIGN.md §4 rule 3) — the
+   deck's four mini-visual loops (bull/bear push, source-chip slide, flip
+   roll, report-tile fill) join the shared [data-motion-gate] pair started
+   for the hero ribbons above. */
+[data-motion-gate] .viz-bar-l,
+[data-motion-gate] .viz-bar-r,
+[data-motion-gate] .viz-chip,
+[data-motion-gate] .viz-flip i,
+[data-motion-gate] .viz-reports i::after { animation-play-state: paused; }
+[data-motion-gate].is-onscreen .viz-bar-l,
+[data-motion-gate].is-onscreen .viz-bar-r,
+[data-motion-gate].is-onscreen .viz-chip,
+[data-motion-gate].is-onscreen .viz-flip i,
+[data-motion-gate].is-onscreen .viz-reports i::after { animation-play-state: running; }
 
 /* SVG app-screen type — real content, not placeholder bars */
 .s-mut    { font: 500 12px 'Inter', sans-serif; fill: #7B8299; letter-spacing: .06em; text-transform: uppercase; }
@@ -411,4 +569,8 @@ main > * { min-width: 0; }
   }
   .u-reveal.anim-ready { opacity: 1; transform: none; }
   .u-ticker-track { animation: none !important; }
+  .deck-outer  { height: auto !important; }
+  .deck-sticky { position: static !important; }
+  .deck-viewport { overflow-x: auto !important; padding: 0 1.5rem !important; }
+  .deck-track  { transform: none !important; }
 }
