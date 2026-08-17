@@ -19,15 +19,24 @@ export default async function HomePage() {
     <>
       <SiteNav />
       <TickerMarquee />
-      <Hero />
-      <TrustStrip />
-      <PipelineStack />
-      <UseCases />
-      <Deck />
-      <LiveSplitFeature />
-      <Faq />
-      <CtaSection />
-      <RecentRunsSection runs={recentRuns} />
+      {/* The design source has no <main> (it's a static mockup, not a real
+          app shell) — but every other route in this app has one
+          (runs/[id]/page.tsx, stock/[ticker]/[date]/page.tsx, not-found.tsx,
+          error.tsx), so its absence here was a port regression, not
+          faithfulness to the reference. SiteNav/TickerMarquee (chrome, not
+          page content) and SiteFooter stay outside it, matching the header/
+          main/footer landmark split those other routes use. */}
+      <main>
+        <Hero />
+        <TrustStrip />
+        <PipelineStack />
+        <UseCases />
+        <Deck />
+        <LiveSplitFeature />
+        <Faq />
+        <CtaSection />
+        <RecentRunsSection runs={recentRuns} />
+      </main>
       <SiteFooter />
     </>
   );

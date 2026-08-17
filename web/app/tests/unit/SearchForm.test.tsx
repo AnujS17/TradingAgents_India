@@ -109,4 +109,24 @@ describe('SearchForm', () => {
     render(<SearchForm variant="cta" />);
     expect(screen.getByPlaceholderText('Enter a ticker, e.g. TCS')).toBeInTheDocument();
   });
+
+  // The cta variant (Task 7's CtaSection) is a second real, money-spending
+  // submit path — the test above only proves it renders, not that its form
+  // actually wires to analyzeRun. The 200/202/429 branching itself is shared
+  // code already covered by the hero-variant tests above, so this just
+  // proves the cta variant's own button/form triggers it, mirroring the
+  // first test's shape with variant="cta".
+  it('submits through analyzeRun on the cta variant', async () => {
+    vi.mocked(analyzeRun).mockResolvedValue({
+      cached: true,
+      accepted: { id: 'r5', status: 'completed', poll_url: '/runs/r5', estimated_seconds: 0 },
+    });
+
+    render(<SearchForm variant="cta" />);
+    await userEvent.type(screen.getByPlaceholderText('Enter a ticker, e.g. TCS'), 'TCS');
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
+
+    expect(analyzeRun).toHaveBeenCalledWith({ ticker: 'TCS', profile: 'fast' });
+    expect(pushMock).toHaveBeenCalledWith('/runs/r5?cached=1');
+  });
 });
