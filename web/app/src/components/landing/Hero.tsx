@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import { SearchForm } from '@/components/SearchForm';
 import { useScrollReveal } from '@/lib/scroll-reveal';
 
@@ -195,9 +195,17 @@ export function Hero() {
                 --rise:16px/--delay:.32s, matching the source form's inline
                 style exactly (see SearchForm.tsx). id="try" lives on this
                 wrapper, not the form itself, so SiteNav's href="#try" still
-                resolves. */}
+                resolves.
+
+                SearchForm reads the URL's query string (useSearchParams) to
+                seed itself from a /?ticker=…&date=… deep link, which forces
+                client-side rendering up to the nearest Suspense boundary —
+                so the boundary is scoped tightly to just the form, not the
+                whole page (moved here from the old page.tsx, Task 7). */}
             <div id="try">
-              <SearchForm variant="hero" />
+              <Suspense fallback={<p className="text-white/40 text-sm mt-8">Loading the search form…</p>}>
+                <SearchForm variant="hero" />
+              </Suspense>
             </div>
           </div>
 

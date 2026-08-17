@@ -1,25 +1,34 @@
-import { Suspense } from 'react';
 import { listRuns } from '@/lib/api-client/client';
-import { RecentRuns } from '@/components/RecentRuns';
-import { SearchForm } from '@/components/SearchForm';
+import { SiteNav } from '@/components/landing/SiteNav';
+import { TickerMarquee } from '@/components/landing/TickerMarquee';
+import { Hero } from '@/components/landing/Hero';
+import { TrustStrip } from '@/components/landing/TrustStrip';
+import { PipelineStack } from '@/components/landing/PipelineStack';
+import { UseCases } from '@/components/landing/UseCases';
+import { Deck } from '@/components/landing/Deck';
+import { LiveSplitFeature } from '@/components/landing/LiveSplitFeature';
+import { Faq } from '@/components/landing/Faq';
+import { CtaSection } from '@/components/landing/CtaSection';
+import { RecentRunsSection } from '@/components/landing/RecentRunsSection';
+import { SiteFooter } from '@/components/landing/SiteFooter';
 
 export default async function HomePage() {
   const recentRuns = await listRuns({ limit: 10 });
 
   return (
-    <main>
-      <h1>TradingAgents — Indian Equity Research</h1>
-      <p>
-        Research, not advice. Every analysis returns full evidence — the bull
-        case, the bear case, and the numbers — not just a rating.
-      </p>
-      {/* SearchForm reads the URL's query string (useSearchParams) to seed
-          itself from a /?ticker=…&date=… deep link, which requires a Suspense
-          boundary above it. */}
-      <Suspense fallback={<p>Loading the search form…</p>}>
-        <SearchForm />
-      </Suspense>
-      <RecentRuns runs={recentRuns} />
-    </main>
+    <>
+      <SiteNav />
+      <TickerMarquee />
+      <Hero />
+      <TrustStrip />
+      <PipelineStack />
+      <UseCases />
+      <Deck />
+      <LiveSplitFeature />
+      <Faq />
+      <CtaSection />
+      <RecentRunsSection runs={recentRuns} />
+      <SiteFooter />
+    </>
   );
 }

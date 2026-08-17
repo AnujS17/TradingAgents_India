@@ -6,8 +6,13 @@ import { expect, test } from '@playwright/test';
 // unit-level mock.
 test('an existing analysis comes back instantly and is marked cached', async ({ page }) => {
   await page.goto('/');
-  await page.getByLabel('Ticker (NSE/BSE)').fill('CACHED');
-  await page.getByRole('button', { name: 'Analyse' }).click();
+  // Scoped to #try (the hero's SearchForm wrapper) — see the comment in
+  // search-to-result.spec.ts: the assembled page (Task 7) has a second,
+  // visually identical "Start researching" button in CtaSection, so an
+  // unscoped role query is ambiguous.
+  const heroForm = page.locator('#try');
+  await heroForm.getByLabel('Ticker symbol').fill('CACHED');
+  await heroForm.getByRole('button', { name: 'Start researching' }).click();
 
   // Generous timeout: this is the first navigation of the suite, so the dev
   // server is compiling /runs/[id] on demand while the router waits on it.

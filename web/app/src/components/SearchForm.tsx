@@ -91,7 +91,17 @@ export function SearchForm({ variant = 'hero' }: { variant?: Variant }) {
   if (variant === 'cta') {
     return (
       <form onSubmit={handleSubmit} aria-label="Request an analysis" className="mt-9 flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
-        <label htmlFor="ticker-cta" className="sr-only">Ticker symbol</label>
+        {/* The source (landing-fintech/index.html:1243) gives both this field
+            and the hero's #ticker-hero the identical sr-only label "Ticker
+            symbol" — harmless in raw static HTML, but once both sections
+            render on the same assembled page (Task 7) it makes the two
+            fields indistinguishable by accessible name, which is a real a11y
+            defect (and what broke getByLabel('Ticker symbol') in the E2E
+            suite once CtaSection joined Hero on one page: Playwright's
+            getByLabel matches substrings, so even a longer label starting
+            with "Ticker symbol" stayed ambiguous). Given a label with no
+            overlapping substring instead of reusing the hero's. */}
+        <label htmlFor="ticker-cta" className="sr-only">Enter a ticker to research</label>
         <input
           id="ticker-cta"
           value={ticker}

@@ -2,8 +2,13 @@ import { expect, test } from '@playwright/test';
 
 test('a 429 shows the server message, and cached reads keep working', async ({ page }) => {
   await page.goto('/');
-  await page.getByLabel('Ticker (NSE/BSE)').fill('RATELIMIT');
-  await page.getByRole('button', { name: 'Analyse' }).click();
+  // Scoped to #try (the hero's SearchForm wrapper) — see the comment in
+  // search-to-result.spec.ts: the assembled page (Task 7) has a second,
+  // visually identical "Start researching" button in CtaSection, so an
+  // unscoped role query is ambiguous.
+  const heroForm = page.locator('#try');
+  await heroForm.getByLabel('Ticker symbol').fill('RATELIMIT');
+  await heroForm.getByRole('button', { name: 'Start researching' }).click();
 
   // Next.js's App Router mounts its own hidden accessibility announcer
   // (#__next-route-announcer__, inside an open shadow root) which also
