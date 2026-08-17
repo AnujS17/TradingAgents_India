@@ -24,3 +24,23 @@ export function parseApiTimestamp(value: string): number {
   const normalised = TIMEZONE_SUFFIX.test(value) ? value : `${value.trim().replace(' ', 'T')}Z`;
   return Date.parse(normalised);
 }
+
+/**
+ * Formats a millisecond duration as `Xm Ys`. Shared by `RunStatusBanner`
+ * (elapsed time while a run is in flight) and `RunHeader` (final run time of
+ * a completed run) so the two surfaces can't drift into different rounding.
+ */
+export function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+/**
+ * Word count for one report body. Reused by `RunHeader` (summed across all
+ * non-null reports for the "Written" stat) and Task 10's `ReportsRecord`.
+ */
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
