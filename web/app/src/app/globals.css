@@ -92,11 +92,33 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
    (`.u-reveal { opacity: 0; ... }` unconditionally) on purpose — that literal
    version leaves content invisible forever with JS disabled, which is
    exactly the failure DESIGN.md rule 1 documents. The `anim-ready` gate is
-   the fix, and is what the Step-4 hook's contract in the task brief expects. */
+   the fix, and is what the Step-4 hook's contract in the task brief expects.
+
+   `border-color` is included here (not left to Tailwind's `transition-colors`
+   utility) because Tailwind v4 puts its utilities inside `@layer utilities`
+   while this file's custom classes are unlayered — per CSS Cascade Layers,
+   unlayered rules always beat layered ones regardless of source order, so
+   `.u-reveal`'s `transition-property` list wins over `transition-colors`
+   wherever both land on the same element (e.g. TrustStrip's
+   `.u-reveal ... hover:border-[#1C6FE6]/40 transition-colors` cards, copied
+   verbatim from the source markup at landing-fintech/index.html:664). This
+   contradicts the plan's original "Tailwind's injected stylesheet wins ties"
+   assumption, which does not hold for Tailwind v4's layered utilities.
+   Without this, the hover border snaps instantly instead of animating.
+
+   `transition-delay` is given per-property (three comma-separated values,
+   matching the three `transition-property` entries in order) rather than
+   left as a single value: a single `var(--delay, 0s)` would repeat across
+   all three properties per the CSS shorthand-matching rule, which would
+   make every hover on a card lag by that card's reveal stagger (up to
+   .24s on TrustStrip) before the border-color transition even started —
+   turning a hover micro-interaction into a sluggish one. Only the reveal's
+   own opacity/transform get the stagger; border-color always starts at 0s. */
 .u-reveal {
   transition: opacity .7s cubic-bezier(0.25,0.46,0.45,0.94),
-              transform .7s cubic-bezier(0.25,0.46,0.45,0.94);
-  transition-delay: var(--delay, 0s);
+              transform .7s cubic-bezier(0.25,0.46,0.45,0.94),
+              border-color .15s ease-out;
+  transition-delay: var(--delay, 0s), var(--delay, 0s), 0s;
 }
 .u-reveal.anim-ready { opacity: 0; transform: translateY(28px); }
 .u-reveal.anim-ready.is-in { opacity: 1; transform: translateY(0); }
