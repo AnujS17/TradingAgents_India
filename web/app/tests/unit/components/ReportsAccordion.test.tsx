@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { ReportsAccordion } from '@/components/ReportsAccordion';
 import type { Reports } from '@/lib/api-client/client';
 
-describe('ReportsAccordion', () => {
+// `ReportsAccordion` is now a thin re-export of `ReportsRecord` (Task 10) —
+// see web/app/src/components/ReportsAccordion.tsx. These tests exercise it
+// through the old import path since that's still what RunView.tsx uses.
+
+describe('ReportsAccordion (ReportsRecord)', () => {
   it('renders only the sections that actually have prose, not all ten', () => {
     const reports: Reports = {
       final_decision: 'The final call.',
@@ -15,15 +19,15 @@ describe('ReportsAccordion', () => {
 
     const { container } = render(<ReportsAccordion reports={reports} />);
 
-    expect(container.querySelectorAll('details')).toHaveLength(3);
-    expect(screen.getByText('Final Decision')).toBeInTheDocument();
-    expect(screen.getByText('Bull Case')).toBeInTheDocument();
-    expect(screen.getByText('Market Analysis')).toBeInTheDocument();
-    expect(screen.queryByText('Sentiment Analysis')).not.toBeInTheDocument();
-    expect(screen.queryByText('News Analysis')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('.rep')).toHaveLength(3);
+    expect(screen.getByText('Final decision')).toBeInTheDocument();
+    expect(screen.getByText('Bull case')).toBeInTheDocument();
+    expect(screen.getByText('Market')).toBeInTheDocument();
+    expect(screen.queryByText('Sentiment')).not.toBeInTheDocument();
+    expect(screen.queryByText('News')).not.toBeInTheDocument();
   });
 
-  it('opens only the first section in REPORT_ORDER so ~11,000 words never dump at once', () => {
+  it('opens only the first row in REPORT_ORDER so ~11,000 words never dump at once', () => {
     const reports: Reports = {
       final_decision: 'The final call.',
       bull_case: 'The bull case.',
@@ -31,28 +35,54 @@ describe('ReportsAccordion', () => {
     };
 
     const { container } = render(<ReportsAccordion reports={reports} />);
-    const sections = Array.from(container.querySelectorAll('details'));
+    const rows = Array.from(container.querySelectorAll('.rep'));
 
     // REPORT_ORDER puts final_decision first, ahead of bull_case and market.
-    expect(sections[0]).toHaveTextContent('Final Decision');
-    expect(sections[0]).toHaveAttribute('open');
-    expect(sections.slice(1).map((section) => section.hasAttribute('open'))).toEqual([false, false]);
+    expect(rows[0]).toHaveTextContent('Final decision');
+    expect(rows[0]).toHaveAttribute('aria-expanded', 'true');
+    expect(rows.slice(1).map((row) => row.getAttribute('aria-expanded'))).toEqual(['false', 'false']);
   });
 
-  it('falls back to the first available section when final_decision is missing', () => {
+  it('falls back to nothing open when final_decision is missing', () => {
     const reports: Reports = { market: 'The market read.', bull_case: 'The bull case.' };
 
     const { container } = render(<ReportsAccordion reports={reports} />);
-    const sections = Array.from(container.querySelectorAll('details'));
+    const rows = Array.from(container.querySelectorAll('.rep'));
 
-    expect(sections).toHaveLength(2);
-    expect(sections[0]).toHaveTextContent('Bull Case');
-    expect(sections[0]).toHaveAttribute('open');
-    expect(sections[1]).not.toHaveAttribute('open');
+    expect(rows).toHaveLength(2);
+    // Only final_decision opens by default; when it's absent, nothing does.
+    expect(rows.every((row) => row.getAttribute('aria-expanded') === 'false')).toBe(true);
   });
 
   it('renders nothing when there are no reports at all', () => {
     const { container } = render(<ReportsAccordion reports={null} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('computes bar length as a fraction of the longest present report, never NaN', () => {
+    // Two reports of different lengths: the longer one should reach --len:1,
+    // the shorter one a fraction of that, and neither should be NaN/undefined.
+    const reports: Reports = {
+      final_decision: 'one two three four five six seven eight',
+      market: 'one two three four',
+    };
+
+    const { container } = render(<ReportsAccordion reports={reports} />);
+    const bars = Array.from(container.querySelectorAll<HTMLElement>('.rep__bar i'));
+
+    expect(bars).toHaveLength(2);
+    const lens = bars.map((bar) => bar.style.getPropertyValue('--len'));
+    expect(lens).toContain('1');
+    expect(lens.every((len) => len !== '' && !Number.isNaN(Number(len)))).toBe(true);
+  });
+
+  it('resolves bar length to a full-width bar, not NaN, when only one report is present', () => {
+    const reports: Reports = { final_decision: 'one two three' };
+
+    const { container } = render(<ReportsAccordion reports={reports} />);
+    const bar = container.querySelector<HTMLElement>('.rep__bar i');
+
+    expect(bar).not.toBeNull();
+    expect(bar!.style.getPropertyValue('--len')).toBe('1');
   });
 });
