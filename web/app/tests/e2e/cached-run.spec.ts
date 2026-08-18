@@ -21,9 +21,13 @@ test('an existing analysis comes back instantly and is marked cached', async ({ 
   // Straight to the verdict — no queued/running banner, because nothing was
   // queued. TheCall (Task 9) only ever prints the rating as an uppercase
   // ruler label (RATING_STOPS.map -> stop.toUpperCase()), never in its
-  // original case — see the same note in search-to-result.spec.ts.
-  await expect(
-    page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true }),
-  ).toBeVisible({ timeout: 15000 });
+  // original case — see the same note in search-to-result.spec.ts. All 5
+  // tier labels always render regardless of the run's actual rating, so
+  // also assert the highlighted-stop class (`text-[#00439D]`, applied only
+  // at `activeIndex` in TheCall.tsx) to bind this back to the run's real
+  // data, not just "a recognized rating rendered somewhere".
+  const underweightStop = page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true });
+  await expect(underweightStop).toBeVisible({ timeout: 15000 });
+  await expect(underweightStop).toHaveClass(/00439D/);
   await expect(page.getByRole('status')).toHaveCount(0);
 });

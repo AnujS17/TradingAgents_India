@@ -48,7 +48,13 @@ export function RunHistoryPanel({
   }));
 
   return (
+    // id="disagree" is TheDesk's (Task 9) Research-team jump-link target
+    // (web/app/src/components/research/TheDesk.tsx) — this is the section
+    // that actually states when repeat runs disagreed, so it's the genuine
+    // landing spot for that link, verified at integration time per
+    // TheDesk's own comment.
     <section
+      id="disagree"
       aria-label="Run history"
       className="mt-8 rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9"
     >

@@ -23,9 +23,17 @@ test('search queues a run and shows the verdict once it completes', async ({ pag
   // web/design/research/index.html) never prints the rating in its original
   // case — it only ever appears as an uppercase ruler label
   // (RATING_STOPS.map -> stop.toUpperCase()) — so this asserts against that
-  // uppercase text instead of the old placeholder's case-preserved <dd>.
-  await expect(
-    page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true }),
-  ).toBeVisible({ timeout: 15000 });
+  // uppercase text.
+  //
+  // TheCall's ruler always renders all 5 tier labels (SELL/UNDERWEIGHT/
+  // HOLD/OVERWEIGHT/BUY) regardless of the run's actual rating, so merely
+  // finding "UNDERWEIGHT" text only proves a verdict card rendered with a
+  // recognized rating, not that *this run's* rating is Underweight. The
+  // active stop is the one distinguishing signal — TheCall.tsx applies
+  // `text-[#00439D]` only to the span at `activeIndex`, no other class — so
+  // assert that class to bind this back to the run's real data.
+  const underweightStop = page.getByLabel('Verdict summary').getByText('UNDERWEIGHT', { exact: true });
+  await expect(underweightStop).toBeVisible({ timeout: 15000 });
+  await expect(underweightStop).toHaveClass(/00439D/);
   await expect(page.getByRole('status')).toHaveCount(0);
 });

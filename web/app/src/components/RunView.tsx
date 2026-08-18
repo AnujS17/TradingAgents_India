@@ -39,26 +39,34 @@ export function RunView({
           separate top-level RunStatusBanner the old RunView rendered is now
           redundant and has been dropped. */}
       <RunHeader run={current} estimatedSeconds={estimatedSeconds} />
-      {current.status === 'completed' && (
-        <main className="max-w-screen-xl mx-auto px-6 lg:px-8 py-10 grid lg:grid-cols-[260px_1fr] gap-8 lg:gap-12 items-start">
-          {/* TheDesk (Task 9) takes no props and does no gating of its own by
-              design — it relies on being mounted inside this same
-              completed-only block, matching TheCall/RunHistoryPanel/
-              ReportsRecord below. */}
-          <TheDesk />
-          <div>
-            <TheCall verdict={current.verdict ?? null} />
-            <RunHistoryPanel
-              runCount={current.run_count}
-              isContested={current.verdict_is_contested}
-              history={historyQuery.data ?? null}
-              isError={historyQuery.isError}
-            />
-            <ReportsRecord reports={current.reports ?? null} />
+      {/* <main> is unconditional — every route needs exactly one <main>
+          landmark regardless of run status (matching HomePage's own
+          unconditional <main>). Only the completed-run content grid inside
+          it is gated; queued/running/failed states render an empty <main>
+          rather than none at all (the old per-route <main> wrapper this
+          task removed always provided one, so this must too). */}
+      <main className="max-w-screen-xl mx-auto px-6 lg:px-8 py-10">
+        {current.status === 'completed' && (
+          <div className="grid lg:grid-cols-[260px_1fr] gap-8 lg:gap-12 items-start">
+            {/* TheDesk (Task 9) takes no props and does no gating of its own
+                by design — it relies on being mounted inside this same
+                completed-only block, matching TheCall/RunHistoryPanel/
+                ReportsRecord below. */}
+            <TheDesk />
+            <div>
+              <TheCall verdict={current.verdict ?? null} />
+              <RunHistoryPanel
+                runCount={current.run_count}
+                isContested={current.verdict_is_contested}
+                history={historyQuery.data ?? null}
+                isError={historyQuery.isError}
+              />
+              <ReportsRecord reports={current.reports ?? null} />
+            </div>
           </div>
-        </main>
-      )}
-      <SiteFooter />
+        )}
+      </main>
+      <SiteFooter variant="research" />
     </>
   );
 }

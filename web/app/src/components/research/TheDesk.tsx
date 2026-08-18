@@ -28,14 +28,22 @@ type Team = {
 };
 
 // Hrefs match the source markup verbatim (web/design/research/index.html
-// lines 280/290/299/306/315). Analysts and Trader both point at `#record`
-// in the source; kept as-is here since the actual section ids are assigned
-// by Task 10/11 and should be verified against those at integration time.
+// lines 280/290/299/306/315), reconciled against the real section ids at
+// integration time (Task 11):
+// - Analysts/Trader -> #record (ReportsRecord.tsx).
+// - Research -> #disagree (RunHistoryPanel.tsx: the contested-verdict
+//   section, since Task 10's evidence-trace `.duel` ledger is out of scope
+//   for this plan).
+// - Risk panel -> #record, not the source's `#risk`: this plan never builds
+//   a separate structured risk-comparison section (`.rk` table, ReportsRecord's
+//   own header comment) — `risk_debate` renders as one more report row inside
+//   ReportsRecord, so #record is where that content actually lives.
+// - Portfolio -> #call (TheCall.tsx).
 const TEAMS: Team[] = [
   { name: 'Analysts', count: 4, href: '#record', agents: ['Market', 'Fundamentals', 'News', 'Sentiment'] },
   { name: 'Research', count: 3, href: '#disagree', agents: ['Bull researcher', 'Bear researcher', 'Research manager'] },
   { name: 'Trader', count: 1, href: '#record', agents: ['Trader'] },
-  { name: 'Risk panel', count: 3, href: '#risk', agents: ['Aggressive', 'Neutral', 'Conservative'] },
+  { name: 'Risk panel', count: 3, href: '#record', agents: ['Aggressive', 'Neutral', 'Conservative'] },
   { name: 'Portfolio', count: 1, href: '#call', agents: ['Portfolio manager'] },
 ];
 
