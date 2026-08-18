@@ -31,9 +31,13 @@ type Team = {
 // lines 280/290/299/306/315), reconciled against the real section ids at
 // integration time (Task 11):
 // - Analysts/Trader -> #record (ReportsRecord.tsx).
-// - Research -> #disagree (RunHistoryPanel.tsx: the contested-verdict
-//   section, since Task 10's evidence-trace `.duel` ledger is out of scope
-//   for this plan).
+// - Research -> #record, not the source's `#disagree` (final review finding
+//   #3): `#disagree` lives on RunHistoryPanel, which renders `null` — and so
+//   never emits its `id="disagree"` at all — whenever `count <= 1`, i.e. on
+//   every run that hasn't been repeated (the common case). Clicking
+//   "Research" then scrolled to nothing. The bull/bear debate reports
+//   (`bull_case`/`bear_case`) live in ReportsRecord regardless, so #record is
+//   an always-valid target for this link.
 // - Risk panel -> #record, not the source's `#risk`: this plan never builds
 //   a separate structured risk-comparison section (`.rk` table, ReportsRecord's
 //   own header comment) — `risk_debate` renders as one more report row inside
@@ -41,7 +45,7 @@ type Team = {
 // - Portfolio -> #call (TheCall.tsx).
 const TEAMS: Team[] = [
   { name: 'Analysts', count: 4, href: '#record', agents: ['Market', 'Fundamentals', 'News', 'Sentiment'] },
-  { name: 'Research', count: 3, href: '#disagree', agents: ['Bull researcher', 'Bear researcher', 'Research manager'] },
+  { name: 'Research', count: 3, href: '#record', agents: ['Bull researcher', 'Bear researcher', 'Research manager'] },
   { name: 'Trader', count: 1, href: '#record', agents: ['Trader'] },
   { name: 'Risk panel', count: 3, href: '#record', agents: ['Aggressive', 'Neutral', 'Conservative'] },
   { name: 'Portfolio', count: 1, href: '#call', agents: ['Portfolio manager'] },
