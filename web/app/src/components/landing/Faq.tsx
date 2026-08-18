@@ -127,7 +127,13 @@ export function Faq() {
                   />
                 </svg>
               </button>
-              <div id={panelId} className="u-acc-body">
+              {/* `max-height: 0; overflow: hidden` (`.u-acc-body`, globals.css)
+                  hides a closed panel visually but leaves its content in the
+                  a11y tree and tab order (final review finding #2). `inert`
+                  removes the subtree from both while the max-height
+                  transition still animates normally (unlike `hidden`, which
+                  would kill it). */}
+              <div id={panelId} className="u-acc-body" inert={!isOpen}>
                 <div>
                   <p className="text-sm text-[#747474] leading-relaxed pb-5">{item.a}</p>
                 </div>

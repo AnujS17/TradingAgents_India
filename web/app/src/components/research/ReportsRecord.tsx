@@ -156,6 +156,14 @@ export function ReportsRecord({ reports }: { reports: Reports | null }) {
                 role="region"
                 aria-label={REPORT_LABELS[key]}
                 style={{ maxHeight: isOpen ? OPEN_PANEL_MAX_HEIGHT : '0px' }}
+                // `max-height: 0; overflow: hidden` alone hides the panel
+                // visually but leaves its content in the a11y tree and tab
+                // order (final review finding #2) — a screen reader or
+                // keyboard user can still reach a closed report's links/text.
+                // `inert` removes the subtree from both while the max-height
+                // transition still animates normally (unlike `hidden`, which
+                // would kill it).
+                inert={!isOpen}
               >
                 <div className="rep__doc">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{reports[key] as string}</ReactMarkdown>
