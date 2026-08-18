@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 // Ported from web/design/landing-fintech/index.html lines 1254-1292 (the
 // footer). Static — no data, no client state, so this stays a server
 // component, matching SiteNav.
@@ -87,12 +89,12 @@ export function SiteFooter({ variant = 'landing' }: { variant?: 'landing' | 'res
             </div>
           </div>
         ) : (
-          <a href="/" className="flex items-center gap-2.5 font-tight font-extrabold text-lg text-[#010101]">
+          <Link href="/" className="flex items-center gap-2.5 font-tight font-extrabold text-lg text-[#010101]">
             <span className="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">
               B
             </span>
             Bench
-          </a>
+          </Link>
         )}
         <div
           className={
