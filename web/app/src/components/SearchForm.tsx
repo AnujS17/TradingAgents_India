@@ -119,8 +119,18 @@ export function SearchForm({ variant = 'hero' }: { variant?: Variant }) {
   }
 
   // hero (default) — full fields
+  //
+  // Always stacks vertically (`flex-col`, no `sm:flex-row`): the source form
+  // this variant was ported from (landing-fintech/index.html:565) only ever
+  // had 2 children (ticker input + submit button), where `sm:flex-row` reads
+  // fine. This hero variant adds a 3rd child (the date input + profile
+  // fieldset row) that the source never had — at `sm:` and above, 3 flex
+  // children racing for a 448px (`max-w-md`) row starve the ticker input
+  // (`flex-1`) down to ~62px (just its icon padding), which measured as a
+  // genuine collapse in-browser at 1280/768/640px (final review finding #1).
+  // Keeping this column-only avoids the collapse at every viewport.
   return (
-    <form onSubmit={handleSubmit} aria-label="Request an analysis" className="u-rise mt-8 flex flex-col sm:flex-row gap-3 max-w-md" style={{ ['--rise' as string]: '16px', ['--delay' as string]: '.32s' }}>
+    <form onSubmit={handleSubmit} aria-label="Request an analysis" className="u-rise mt-8 flex flex-col gap-3 max-w-md" style={{ ['--rise' as string]: '16px', ['--delay' as string]: '.32s' }}>
       <div className="relative flex-1">
         <svg className="absolute left-4 top-1/2 -translate-y-1/2" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="#8FA0C4" strokeWidth="2"/><path d="M21 21l-4.3-4.3" stroke="#8FA0C4" strokeWidth="2" strokeLinecap="round"/></svg>
         <label htmlFor="ticker-hero" className="sr-only">Ticker symbol</label>

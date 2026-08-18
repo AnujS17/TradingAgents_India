@@ -10,7 +10,19 @@ test('search queues a run and shows the verdict once it completes', async ({ pag
   // mode violation once the whole page is composed. This test exercises the
   // primary hero search flow, so it targets that form specifically.
   const heroForm = page.locator('#try');
-  await heroForm.getByLabel('Ticker symbol').fill('PROGRESS');
+  const heroTickerInput = heroForm.getByLabel('Ticker symbol');
+  // Regression guard for a real collapse: the hero form has 3 flex children
+  // (ticker input, date+profile row, submit button). With `sm:flex-row` on
+  // the form (fixed in SearchForm.tsx, final review finding #1), those 3
+  // children competed for a 448px row at sm: and above, and the ticker
+  // input (flex-1) lost to its two non-shrinking siblings, collapsing to
+  // ~62px wide — just its search-icon padding, with no usable typing area.
+  // A correctly stacked column gives it close to the full max-w-md width, so
+  // 200px is comfortably above the measured collapse and comfortably below
+  // that.
+  const box = await heroTickerInput.boundingBox();
+  expect(box?.width).toBeGreaterThan(200);
+  await heroTickerInput.fill('PROGRESS');
   await heroForm.getByRole('button', { name: 'Start researching' }).click();
 
   await expect(page).toHaveURL(/\/runs\/run-progressive/);
