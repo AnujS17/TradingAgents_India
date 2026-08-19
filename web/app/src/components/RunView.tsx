@@ -8,6 +8,7 @@ import { RunHeader } from './research/RunHeader';
 import { TheDesk } from './research/TheDesk';
 import { TheCall } from './research/TheCall';
 import { ReportsRecord } from './research/ReportsRecord';
+import { SourcesPanel } from './research/SourcesPanel';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { SiteFooter } from './landing/SiteFooter';
 
@@ -62,6 +63,7 @@ export function RunView({
                 isError={historyQuery.isError}
               />
               <ReportsRecord reports={current.reports ?? null} />
+              <SourcesPanel sources={current.news_sources ?? []} />
             </div>
           </div>
         )}
