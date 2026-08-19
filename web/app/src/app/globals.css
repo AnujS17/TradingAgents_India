@@ -605,8 +605,13 @@ main > * { min-width: 0; }
 .trace__in { margin-top: 16px; border: 1px solid #D3E1F7; background: #F6FAFF;
              border-radius: 14px; padding: 15px 17px; text-align: left; }
 .trace__src { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
-              letter-spacing: .085em; color: var(--accent-1); }
+              letter-spacing: .085em; color: var(--accent-1); text-transform: uppercase; }
 .trace__k { font-size: .8125rem; color: #676D80; margin-top: 9px; }
+/* Preflight resets an <a>'s color/decoration to `inherit`, so the linked
+   article title (rendered inside .trace__k when the citation has a url)
+   needs its own affordance here or it reads as plain, unclickable text. */
+.trace__k a { color: var(--accent-1); text-decoration: underline; text-underline-offset: 2px; }
+.trace__k a:hover { color: var(--navy); }
 .trace__note { font-size: .8125rem; line-height: 1.55; color: #5A6070; margin-top: 7px; }
 
 /* ═══════════════════════════════════════════════════════════════════

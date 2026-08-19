@@ -163,7 +163,7 @@ class SqlRunStore:
                 ratings=_ratings(siblings),
                 verdict_is_contested=_contested(siblings),
                 runs=[
-                    RunSummary.model_validate(_to_detail(r), from_attributes=True)
+                    RunSummary.model_validate(r, from_attributes=True)
                     for r in siblings
                 ],
             )
@@ -180,8 +180,7 @@ class SqlRunStore:
             stmt = stmt.order_by(Run.created_at.desc(), Run.id.desc()).limit(limit).offset(offset)
             rows = list((await session.execute(stmt)).scalars())
             return [
-                RunSummary.model_validate(_to_detail(r), from_attributes=True)
-                for r in rows
+                RunSummary.model_validate(r, from_attributes=True) for r in rows
             ]
 
     # --- worker-side ---------------------------------------------------

@@ -15,11 +15,18 @@ import re
 
 from api.schemas import NewsSource, Reports
 
-# Every news vendor (tradingagents/dataflows/rss.py::format_articles,
-# gdelt_news.py, alpha_vantage_news.py, finnhub_news.py — each with a
-# local ``_format_articles``; yfinance_news.py inline) renders one of:
+# These producers of Reports.news / Reports.sentiment render one of:
 #   ### {title} (source: {source}, {date})
 #   ### {title} (source: {source})            <- yfinance, no date
+# Confirmed producers: tradingagents/dataflows/rss.py::format_articles
+# (google_news), gdelt_news.py and india_news.py (each with a local
+# ``_format_articles``, byte-identical shape), finnhub_news.py (local
+# ``_format_articles``), and yfinance_news.py (inline, no date in heading).
+# alpha_vantage_news.py does NOT match this shape — it returns the raw,
+# unformatted vendor API response, not a "### heading" block. If the vendor
+# fallback chain ever reaches it, this parser correctly yields zero
+# citations for that text; that is accepted degradation (see
+# extract_news_sources's docstring), not a bug to fix here.
 _ARTICLE_HEADING = re.compile(
     r"^### (?P<title>.+?) \(source: (?P<source>[^,)]+)(?:, (?P<date>[^)]+))?\)\s*$"
 )
@@ -40,10 +47,39 @@ _PREFETCHED_SECTION_END = re.compile(
     r"^## (?:News|Sentiment) Analyst Report\s*$", re.MULTILINE
 )
 
+# What the "date" capture group of _ARTICLE_HEADING looks like when it is
+# actually a date: either the real formatters' "%Y-%m-%d" output, or their
+# literal "date unknown" fallback (rss.py/finnhub_news.py/gdelt_news.py/
+# india_news.py all emit one of these two). Anything else in that group
+# — e.g. the tail of a publisher name that itself contains a comma, on the
+# no-date yfinance heading shape — is not a date at all; see
+# _split_source_and_date below.
+_DATE_SHAPE = re.compile(r"^\d{4}-\d{2}-\d{2}$|^date unknown$", re.IGNORECASE)
+
 
 def _prefetched_text(raw: str) -> str:
+    """Text between the start of the report and the analyst's own prose.
+
+    Every report ever persisted has the boundary heading (verified via git
+    history), but that is an accident of what has existed so far, not a
+    structural guarantee. Fail closed: if the boundary is missing, treat
+    NONE of the text as pre-fetched data rather than risk scanning the
+    model's own prose for "### ..." look-alikes.
+    """
     match = _PREFETCHED_SECTION_END.search(raw)
-    return raw[: match.start()] if match else raw
+    return raw[: match.start()] if match else ""
+
+
+def _split_source_and_date(source: str, date: str | None) -> tuple[str, str | None]:
+    """Guards against a comma inside a publisher name being misread as a
+    date separator on the no-date (yfinance) heading shape, e.g.
+    ``### Deal signed (source: Dow Jones, Inc.)`` — ``_ARTICLE_HEADING``'s
+    optional date group greedily captures "Inc." there. If what was
+    captured as "date" doesn't actually look like a date, it was really
+    the rest of the source name: fold it back in and report no date."""
+    if date is not None and not _DATE_SHAPE.match(date.strip()):
+        return f"{source}, {date}".strip(), None
+    return source, date
 
 
 def _parse_articles(text: str) -> list[NewsSource]:
@@ -81,11 +117,14 @@ def _parse_articles(text: str) -> list[NewsSource]:
 
         snippet = " ".join(snippet_lines).strip()[:500] or None
         date = match.group("date")
+        source, date = _split_source_and_date(
+            match.group("source").strip(), date.strip() if date else None
+        )
         sources.append(
             NewsSource(
                 title=match.group("title").strip(),
-                source=match.group("source").strip(),
-                published_date=date.strip() if date else None,
+                source=source,
+                published_date=date,
                 url=url,
                 snippet=snippet,
             )

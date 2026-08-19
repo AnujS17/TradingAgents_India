@@ -4,9 +4,12 @@ The parser recovers structure from text that news_analyst.py and
 sentiment_analyst.py already embed verbatim in their reports (the
 pre-fetched article blocks). These fixtures are copied from the real
 heading shape each vendor's ``_format_articles``/``format_articles``
-emits (tradingagents/dataflows/rss.py, gdelt_news.py,
-alpha_vantage_news.py, finnhub_news.py, yfinance_news.py) so a format
-drift in any of them is caught here, not silently in production.
+emits (tradingagents/dataflows/rss.py, gdelt_news.py, india_news.py,
+finnhub_news.py, yfinance_news.py) so a format drift in any of them is
+caught here, not silently in production. alpha_vantage_news.py is NOT
+in that list: it returns raw unformatted API JSON, not this heading
+shape, so it yields zero citations by design if the vendor fallback
+chain reaches it.
 """
 
 import pytest
@@ -55,6 +58,25 @@ No Google News articles found for TCS.NS between 2026-07-10 and 2026-08-10
 ## News Analyst Report
 
 No notable news this period.
+"""
+
+# No "## News Analyst Report" / "## Sentiment Analyst Report" boundary at
+# all — just raw, unstructured prose, as if the report string were somehow
+# missing the heading both analyst nodes are supposed to always emit.
+_NO_BOUNDARY_HEADING = """The company had a mixed quarter. Analysts remain
+split on the outlook, with some citing margin pressure and others pointing
+to volume growth as a stabilising factor going into the next quarter.
+"""
+
+_COMMA_IN_SOURCE_NAME_BLOCK = """## Pre-Fetched Company News Used
+
+## TCS.NS News from Yahoo Finance
+### Deal signed (source: Dow Jones, Inc.)
+Link: https://example.com/deal
+
+## News Analyst Report
+
+Deal signed.
 """
 
 
@@ -122,3 +144,30 @@ def test_dedupes_the_same_article_across_news_and_sentiment_reports():
     sources = extract_news_sources(reports)
 
     assert len(sources) == 2  # not 4 — same (title, source) pairs, deduped
+
+
+@pytest.mark.unit
+def test_fails_closed_when_no_boundary_heading_is_present():
+    """Pins the fail-closed behavior: a report string missing the
+    '## News Analyst Report' / '## Sentiment Analyst Report' boundary must
+    yield zero citations, not fall back to scanning the whole raw string
+    (which could include the model's own prose). Today every persisted
+    report has the heading, but that must not be the only thing keeping
+    this safe."""
+    reports = Reports(news=_NO_BOUNDARY_HEADING)
+
+    assert extract_news_sources(reports) == []
+
+
+@pytest.mark.unit
+def test_comma_in_source_name_does_not_corrupt_published_date():
+    """Real data-corruption case: on the no-date (yfinance) heading shape,
+    a publisher name containing a comma (e.g. 'Dow Jones, Inc.') must not
+    be misparsed as source='Dow Jones' / published_date='Inc.'."""
+    reports = Reports(news=_COMMA_IN_SOURCE_NAME_BLOCK)
+
+    sources = extract_news_sources(reports)
+
+    assert len(sources) == 1
+    assert sources[0].source == "Dow Jones, Inc."
+    assert sources[0].published_date is None

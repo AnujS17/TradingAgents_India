@@ -225,6 +225,67 @@ def test_refresh_data_reaches_the_worker(store, monkeypatch):
 
 
 @pytest.mark.unit
+def test_history_returns_correct_run_summaries(store, monkeypatch):
+    """Fix regression guard: history() validates RunSummary directly from the
+    ORM row instead of building a full RunDetail (via _to_detail, which runs
+    the news-sources parser) purely to downcast it — RunSummary has no
+    news_sources field, so that work was wasted. Confirms the lightweight
+    path still yields correct fields."""
+    import api.service
+
+    monkeypatch.setattr(
+        api.service,
+        "run_analysis",
+        lambda *a, **k: (Verdict(rating="Buy"), Reports(final_decision="Accumulate.")),
+    )
+
+    async def scenario():
+        from api.worker import execute_run
+
+        await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+        return await store.history("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+
+    history = _run(scenario())
+    assert history.run_count == 1
+    assert len(history.runs) == 1
+    summary = history.runs[0]
+    assert summary.ticker == "SIEMENS.NS"
+    assert summary.analysis_date == DAY
+    assert summary.profile is AnalysisProfile.FAST
+    assert summary.status is RunStatus.COMPLETED
+    assert summary.completed_at is not None
+
+
+@pytest.mark.unit
+def test_list_returns_correct_run_summaries(store, monkeypatch):
+    """Same guard as test_history_returns_correct_run_summaries, for the
+    other endpoint (`list()`) that was also going through _to_detail()
+    needlessly."""
+    import api.service
+
+    monkeypatch.setattr(
+        api.service,
+        "run_analysis",
+        lambda *a, **k: (Verdict(rating="Sell"), Reports(final_decision="Trim.")),
+    )
+
+    async def scenario():
+        from api.worker import execute_run
+
+        await store.create("TCS.NS", DAY, AnalysisProfile.FAST)
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+        return await store.list(ticker="TCS.NS", limit=10, offset=0)
+
+    summaries = _run(scenario())
+    assert len(summaries) == 1
+    assert summaries[0].ticker == "TCS.NS"
+    assert summaries[0].status is RunStatus.COMPLETED
+
+
+@pytest.mark.unit
 def test_run_counter_is_per_client_and_global(store):
     async def scenario():
         await store.create("A.NS", DAY, AnalysisProfile.FAST, requested_by="1.1.1.1")
