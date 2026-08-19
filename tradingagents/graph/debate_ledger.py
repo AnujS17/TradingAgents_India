@@ -41,9 +41,14 @@ class DebateLedgerExtractor:
 
     def extract(self, bull_history: str, bear_history: str) -> DebateLedger:
         """Never raises. Any failure yields an empty ledger."""
-        structured_llm = bind_structured(
-            self.quick_thinking_llm, DebateLedger, "Debate Ledger Extractor"
-        )
+        try:
+            structured_llm = bind_structured(
+                self.quick_thinking_llm, DebateLedger, "Debate Ledger Extractor"
+            )
+        except Exception as exc:  # noqa: BLE001 - never let extraction fail the run
+            logger.warning("Debate Ledger Extractor: bind_structured failed (%s)", exc)
+            return DebateLedger(topics=[])
+
         if structured_llm is None:
             return DebateLedger(topics=[])
 

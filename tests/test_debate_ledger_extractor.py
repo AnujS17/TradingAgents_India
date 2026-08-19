@@ -86,3 +86,21 @@ def test_returns_empty_ledger_when_structured_call_returns_wrong_type():
     ledger = extractor.extract("bull text", "bear text")
 
     assert ledger == DebateLedger(topics=[])
+
+
+@pytest.mark.unit
+def test_never_raises_when_bind_structured_raises_unexpected_exception():
+    """bind_structured only catches NotImplementedError and AttributeError.
+
+    Any other exception (e.g., ValueError, RuntimeError) from with_structured_output
+    must also be caught by extract() to maintain the never-raise contract.
+    """
+    class _BadBindLLM:
+        def with_structured_output(self, schema):
+            raise ValueError("bad schema configuration")
+
+    extractor = DebateLedgerExtractor(_BadBindLLM())
+
+    ledger = extractor.extract("bull text", "bear text")
+
+    assert ledger == DebateLedger(topics=[])
