@@ -415,6 +415,58 @@
         ],
         "title": "HealthResponse"
       },
+      "NewsSource": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "published_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Date"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "source"
+        ],
+        "title": "NewsSource",
+        "description": "One article the News or Sentiment report was actually given.\n\nRecovered from the pre-fetched article text those reports already\nembed verbatim \u2014 never a claim about which sentence in the report\ncites it, just \"this was in the grounding set.\""
+      },
       "Reports": {
         "properties": {
           "market": {
@@ -635,6 +687,14 @@
                 "type": "null"
               }
             ]
+          },
+          "news_sources": {
+            "items": {
+              "$ref": "#/components/schemas/NewsSource"
+            },
+            "type": "array",
+            "title": "News Sources",
+            "description": "Articles the News/Sentiment reports were grounded in. Always a list \u2014 empty means nothing parsed, not an error."
           },
           "run_count": {
             "type": "integer",

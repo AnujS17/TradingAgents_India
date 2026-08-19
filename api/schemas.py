@@ -134,6 +134,21 @@ class Reports(BaseModel):
     final_decision: str | None = None
 
 
+class NewsSource(BaseModel):
+    """One article the News or Sentiment report was actually given.
+
+    Recovered from the pre-fetched article text those reports already
+    embed verbatim — never a claim about which sentence in the report
+    cites it, just "this was in the grounding set."
+    """
+
+    title: str
+    source: str
+    published_date: str | None = None
+    url: str | None = None
+    snippet: str | None = None
+
+
 class RunSummary(BaseModel):
     """Lightweight view — list endpoints and poll responses use this."""
 
@@ -157,6 +172,11 @@ class RunSummary(BaseModel):
 class RunDetail(RunSummary):
     verdict: Verdict | None = None
     reports: Reports | None = None
+    news_sources: list[NewsSource] = Field(
+        default_factory=list,
+        description="Articles the News/Sentiment reports were grounded in. "
+        "Always a list — empty means nothing parsed, not an error.",
+    )
 
     run_count: int = Field(
         default=1,
