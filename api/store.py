@@ -16,6 +16,7 @@ from datetime import date as Date
 from sqlalchemy import select, update
 
 from api.db import Run, get_sessionmaker, new_run_id, utcnow
+from api.news_sources import extract_news_sources
 from api.schemas import (
     AnalysisProfile,
     Reports,
@@ -28,6 +29,7 @@ from api.schemas import (
 
 
 def _to_detail(row: Run) -> RunDetail:
+    reports = Reports.model_validate(row.reports) if row.reports else None
     return RunDetail(
         id=row.id,
         ticker=row.ticker,
@@ -38,7 +40,8 @@ def _to_detail(row: Run) -> RunDetail:
         completed_at=row.completed_at,
         error=row.error,
         verdict=Verdict.model_validate(row.verdict) if row.verdict else None,
-        reports=Reports.model_validate(row.reports) if row.reports else None,
+        reports=reports,
+        news_sources=extract_news_sources(reports) if reports else [],
     )
 
 
