@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date as Date
 
-from api.schemas import AnalysisProfile, Reports, TradeLevels, Verdict
+from api.schemas import AnalysisProfile, DebateLedger, LedgerTopic, Reports, TradeLevels, Verdict
 
 
 def build_config(profile: AnalysisProfile) -> dict:
@@ -145,7 +145,7 @@ def run_analysis(
     analysis_date: Date,
     profile: AnalysisProfile,
     refresh_data: bool = False,
-) -> tuple[Verdict, Reports]:
+) -> tuple[Verdict, Reports, DebateLedger]:
     """Execute one full analysis. Blocking, minutes long, worker-only.
 
     Note the engine freezes its own inputs per (ticker, date) via
@@ -154,6 +154,7 @@ def run_analysis(
     the LLM reasoning. That is a separate layer from the run cache above it,
     which skips the reasoning too.
     """
+    from tradingagents.graph.debate_ledger import DebateLedgerExtractor
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
     config = build_config(profile)
@@ -166,4 +167,15 @@ def run_analysis(
     graph = TradingAgentsGraph(config=config)
     final_state, _signal = graph.propagate(ticker, str(analysis_date))
 
-    return _extract_verdict(final_state), _extract_reports(final_state)
+    debate_state = final_state.get("investment_debate_state") or {}
+    agent_ledger = DebateLedgerExtractor(graph.quick_thinking_llm).extract(
+        debate_state.get("bull_history", ""), debate_state.get("bear_history", "")
+    )
+    ledger = DebateLedger(
+        topics=[
+            LedgerTopic(topic=t.topic, bull_point=t.bull_point, bear_point=t.bear_point)
+            for t in agent_ledger.topics
+        ]
+    )
+
+    return _extract_verdict(final_state), _extract_reports(final_state), ledger
