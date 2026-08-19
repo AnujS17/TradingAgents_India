@@ -6,6 +6,7 @@ export type RunHistory = components['schemas']['RunHistory'];
 export type RunAccepted = components['schemas']['RunAccepted'];
 export type Verdict = components['schemas']['Verdict'];
 export type Reports = components['schemas']['Reports'];
+export type NewsSource = components['schemas']['NewsSource'];
 export type AnalysisProfile = components['schemas']['AnalysisProfile'];
 export type RunStatus = components['schemas']['RunStatus'];
 

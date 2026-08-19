@@ -597,6 +597,18 @@ main > * { min-width: 0; }
 .rep__more { font-size: .8125rem; color: #676D80; margin-top: 14px; padding-top: 12px;
              border-top: 1px solid var(--line-1); max-width: 68ch; }
 
+/* ── News source citations ──────────────────────────────────────────
+   Ported from web/design/research/index.html:134-141 (the evidence-trace
+   card styling only — not .fig/.trace, which drive an inline-prose
+   drill-down this panel does not use; see docs/superpowers/specs/
+   2026-08-19-news-sources-design.md). */
+.trace__in { margin-top: 16px; border: 1px solid #D3E1F7; background: #F6FAFF;
+             border-radius: 14px; padding: 15px 17px; text-align: left; }
+.trace__src { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
+              letter-spacing: .085em; color: var(--accent-1); }
+.trace__k { font-size: .8125rem; color: #676D80; margin-top: 9px; }
+.trace__note { font-size: .8125rem; line-height: 1.55; color: #5A6070; margin-top: 7px; }
+
 /* ═══════════════════════════════════════════════════════════════════
    Reduced motion — DESIGN.md §4 rule 6. Drop movement, keep opacity/colour.
    Near-identical block in both reference files; this is the union.

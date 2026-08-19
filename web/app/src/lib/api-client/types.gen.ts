@@ -200,6 +200,26 @@ export interface components {
             queue: string;
         };
         /**
+         * NewsSource
+         * @description One article the News or Sentiment report was actually given.
+         *
+         *     Recovered from the pre-fetched article text those reports already
+         *     embed verbatim — never a claim about which sentence in the report
+         *     cites it, just "this was in the grounding set."
+         */
+        NewsSource: {
+            /** Title */
+            title: string;
+            /** Source */
+            source: string;
+            /** Published Date */
+            published_date?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Snippet */
+            snippet?: string | null;
+        };
+        /**
          * Reports
          * @description The full analysis text, stage by stage.
          *
@@ -275,6 +295,11 @@ export interface components {
             cached: boolean;
             verdict?: components["schemas"]["Verdict"] | null;
             reports?: components["schemas"]["Reports"] | null;
+            /**
+             * News Sources
+             * @description Articles the News/Sentiment reports were grounded in. Always a list — empty means nothing parsed, not an error.
+             */
+            news_sources?: components["schemas"]["NewsSource"][];
             /**
              * Run Count
              * @description How many analyses exist for this ticker, date and profile. Greater than 1 means someone requested a fresh run.
