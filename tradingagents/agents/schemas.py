@@ -55,42 +55,6 @@ class TraderAction(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Debate ledger (post-hoc extraction, not a live debate-agent schema)
-# ---------------------------------------------------------------------------
-
-
-class LedgerTopic(BaseModel):
-    """One row of the topic-by-topic bull/bear ledger.
-
-    Extracted after the debate concludes by DebateLedgerExtractor
-    (tradingagents/graph/debate_ledger.py) — this is not something either
-    the bull or bear researcher agent produces directly.
-    """
-
-    topic: str = Field(
-        description="Short label for the debated point, e.g. 'RSI reading', "
-        "'Free cash flow', 'Revenue growth'."
-    )
-    bull_point: str | None = Field(
-        default=None,
-        description="The bull analyst's argument on this topic, paraphrased "
-        "concisely. Null if the bull side never raised this topic.",
-    )
-    bear_point: str | None = Field(
-        default=None,
-        description="The bear analyst's argument on this topic, paraphrased "
-        "concisely. Null if the bear side never raised this topic.",
-    )
-
-
-class DebateLedger(BaseModel):
-    """The full set of ledger rows for one debate. Empty means extraction
-    found nothing or failed — never a fabricated row."""
-
-    topics: list[LedgerTopic] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
 # Research Manager
 # ---------------------------------------------------------------------------
 

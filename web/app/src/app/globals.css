@@ -500,6 +500,42 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 .team__link:hover { color: var(--accent-1); }
 .team__n { font-size: .6875rem; font-weight: 700; color: #676D80; font-variant-numeric: tabular-nums; }
 
+/* ── Live per-team panel. Reuses .ag/.team's label-plus-shape language
+   above (DESIGN.md §4 rule 4: never a pulsing dot) for per-agent status
+   inside each team's card, plus a bounded, themed-scrollbar text well —
+   same pattern as .rep__doc, sized for a live snippet rather than a full
+   report. ────────────────────────────────────────────────────────────── */
+.live__doc { max-height: 220px; overflow-y: auto; padding: 2px 2px 4px;
+             scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin; }
+.live__doc > *:first-child { margin-top: 0; }
+.live__doc p { font-size: .875rem; line-height: 1.6; color: #3A4152; max-width: 68ch; }
+.live__doc p + p { margin-top: 10px; }
+.live__doc strong { color: var(--ink); font-weight: 600; }
+.live__doc em { color: #3A4152; }
+/* Obvious scale/weight steps between levels, more space above a heading
+   than below it (craft-floor's Type check) -- these reports rarely go
+   past ### in practice, but ##/#### are styled too for whatever a model
+   actually emits. */
+.live__doc h1, .live__doc h2, .live__doc h3, .live__doc h4 {
+  font-family: 'Inter Tight', sans-serif; color: var(--ink); font-weight: 800;
+  letter-spacing: -.01em; margin-top: 16px;
+}
+.live__doc h1 { font-size: 1.0625rem; }
+.live__doc h2 { font-size: 1rem; }
+.live__doc h3, .live__doc h4 { font-size: .9375rem; }
+.live__doc h1 + *, .live__doc h2 + *, .live__doc h3 + *, .live__doc h4 + * { margin-top: 6px; }
+.live__doc ul, .live__doc ol { margin-top: 8px; padding-left: 1.1em; }
+.live__doc ul { list-style: disc; }
+.live__doc ol { list-style: decimal; }
+.live__doc li { font-size: .875rem; line-height: 1.55; color: #3A4152; margin-top: 4px; }
+.live__doc li::marker { color: #9AA1B4; }
+.live__doc table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .8125rem; }
+.live__doc th, .live__doc td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-1); }
+.live__doc thead th { font-family: 'Inter Tight', sans-serif; font-weight: 700; color: #676D80;
+                       font-size: .6875rem; letter-spacing: .04em; text-transform: uppercase; }
+.live__doc code { font-family: ui-monospace, monospace; font-size: .8125rem; background: #F4F6FB;
+                   border-radius: 4px; padding: 1px 5px; color: var(--ink-2); }
+
 /* ── Contested-point ledger. The seam is the spine of the verdict: one
    continuous rule down the centre, with each contested topic breaking it.
    Bull reads left, bear reads right. Below 900px the pairs stack and the

@@ -9,10 +9,12 @@ against a repository interface so that swapping the in-memory stub for
 Postgres + RQ does not change this file.
 """
 
+import asyncio
 from datetime import date as Date
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from api.dependencies import RunStoreDep
 from api.ratelimit import client_identity, enforce_budget
@@ -127,6 +129,42 @@ async def get_run(run_id: str, store: RunStoreDep) -> RunDetail:
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.get("/runs/{run_id}/stream", tags=["runs"])
+async def stream_run(run_id: str, store: RunStoreDep, request: Request) -> StreamingResponse:
+    """Server-Sent Events: token-level live view of an in-progress run.
+
+    Honors Last-Event-ID (sent automatically by a reconnecting browser
+    EventSource) so a refresh mid-run resumes rather than replaying from
+    the start. Polls run_events via the same WAL-mode SQLite pattern
+    api/db.py already documents for concurrent reader/writer access.
+
+    Registered ABOVE /runs/{ticker}/{analysis_date} on purpose: both are
+    two-segment paths under /runs, and FastAPI matches route order, so this
+    one must come first or every "stream" would be swallowed as a bogus
+    analysis_date and 422 instead of streaming.
+    """
+    last_seq = int(request.headers.get("Last-Event-ID", "0") or "0")
+
+    async def event_source():
+        seq = last_seq
+        while True:
+            if await request.is_disconnected():
+                return
+            run = await store.get(run_id)
+            if run is None:
+                return
+            events = await store.get_events_since(run_id, seq)
+            for event in events:
+                seq = event.seq
+                yield f"id: {event.seq}\ndata: {event.model_dump_json()}\n\n"
+            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+                yield "event: done\ndata: {}\n\n"
+                return
+            await asyncio.sleep(0.4)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @router.get(

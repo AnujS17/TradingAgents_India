@@ -149,25 +149,6 @@ class NewsSource(BaseModel):
     snippet: str | None = None
 
 
-class LedgerTopic(BaseModel):
-    """Wire mirror of tradingagents.agents.schemas.LedgerTopic. Kept
-    separate on purpose (api/schemas.py's own module docstring: the wire
-    contract must not couple to the agents' structured-output contract)."""
-
-    topic: str
-    bull_point: str | None = None
-    bear_point: str | None = None
-
-
-class DebateLedger(BaseModel):
-    """Wire mirror of tradingagents.agents.schemas.DebateLedger — the
-    run_analysis()-internal carrier for the extracted rows before they land
-    on RunDetail.debate_ledger. Kept separate for the same reason as
-    LedgerTopic above."""
-
-    topics: list[LedgerTopic] = Field(default_factory=list)
-
-
 class RunSummary(BaseModel):
     """Lightweight view — list endpoints and poll responses use this."""
 
@@ -196,15 +177,6 @@ class RunDetail(RunSummary):
         description="Articles the News/Sentiment reports were grounded in. "
         "Always a list — empty means nothing parsed, not an error.",
     )
-    debate_ledger: list[LedgerTopic] = Field(
-        default_factory=list,
-        description="Topic-by-topic bull/bear pairing, extracted once after "
-        "the debate concludes. Always a list — empty means no ledger was "
-        "produced (extraction failure, or a run older than this feature), "
-        "not an error. Not retroactive: pre-existing runs stay empty "
-        "permanently.",
-    )
-
     run_count: int = Field(
         default=1,
         description="How many analyses exist for this ticker, date and "
@@ -232,6 +204,14 @@ class RunHistory(BaseModel):
     )
     verdict_is_contested: bool
     runs: list[RunSummary]
+
+
+class RunEventOut(BaseModel):
+    """One streamed token chunk, as read back for the SSE payload."""
+
+    seq: int
+    node_name: str
+    text_delta: str
 
 
 class RunAccepted(BaseModel):

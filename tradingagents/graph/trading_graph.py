@@ -504,6 +504,63 @@ class TradingAgentsGraph:
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
 
+    def propagate_streaming(self, company_name, trade_date, asset_type: str = "stock", on_token=None):
+        """Like propagate(), but also streams token-level chunks through
+        on_token(node_name: str, delta: str) as the graph executes.
+
+        on_token is optional; passing None runs identically to propagate()
+        with no callback overhead beyond the extra stream_mode. on_token is
+        never allowed to raise into this method's control flow -- a failing
+        callback degrades to "no live view for that chunk," never fails the
+        run itself (see docs/superpowers/specs/2026-08-19-live-streaming-design.md).
+
+        Returns the merged final-state dict (the same final_state propagate()
+        builds internally before pairing it with a processed signal) -- not
+        propagate()'s own (final_state, signal) tuple, since callers of this
+        streaming path only need the state.
+
+        Does NOT modify propagate()/_run_graph() -- this is a parallel,
+        additive execution path for the worker's streaming call site only.
+        """
+        # Same ticker-resolution/snapshot/memory-log setup _run_graph() uses
+        # (see propagate()'s comments above for why each step is ordered
+        # this way); duplicated rather than factored out to avoid touching
+        # the tuned, working propagate()/_run_graph() path.
+        company_name = resolve_ticker_symbol(company_name, asset_type)
+        self.ticker = company_name
+
+        from tradingagents.dataflows.snapshot_cache import set_snapshot_date
+
+        set_snapshot_date(trade_date)
+        self._resolve_pending_entries(company_name)
+
+        past_context = self.memory_log.get_past_context(company_name)
+        init_agent_state = self.propagator.create_initial_state(
+            company_name, trade_date, asset_type=asset_type, past_context=past_context
+        )
+        args = self.propagator.get_graph_args()
+        args.pop("stream_mode", None)  # this method controls stream_mode itself
+
+        final_state: dict = {}
+        for stream_mode, chunk in self.graph.stream(
+            init_agent_state, stream_mode=["values", "messages"], **args
+        ):
+            if stream_mode == "values":
+                final_state.update(chunk)
+            elif stream_mode == "messages" and on_token is not None:
+                message_chunk, metadata = chunk
+                node_name = metadata.get("langgraph_node", "unknown")
+                delta = getattr(message_chunk, "content", "") or ""
+                if delta:
+                    try:
+                        on_token(node_name, delta)
+                    except Exception as exc:  # noqa: BLE001 - never fail the run over a live-view glitch
+                        logger.warning("propagate_streaming: on_token failed (%s)", exc)
+
+        self.curr_state = final_state
+        self._log_state(trade_date, final_state)
+        return final_state
+
     def _run_graph(self, company_name, trade_date, asset_type: str = "stock"):
         """Execute the graph and write the resulting state to disk and memory log."""
         # Initialize state — inject memory log context for PM.

@@ -175,6 +175,47 @@
         }
       }
     },
+    "/runs/{run_id}/stream": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Stream Run",
+        "description": "Server-Sent Events: token-level live view of an in-progress run.\n\nHonors Last-Event-ID (sent automatically by a reconnecting browser\nEventSource) so a refresh mid-run resumes rather than replaying from\nthe start. Polls run_events via the same WAL-mode SQLite pattern\napi/db.py already documents for concurrent reader/writer access.\n\nRegistered ABOVE /runs/{ticker}/{analysis_date} on purpose: both are\ntwo-segment paths under /runs, and FastAPI matches route order, so this\none must come first or every \"stream\" would be swallowed as a bogus\nanalysis_date and 422 instead of streaming.",
+        "operationId": "stream_run_runs__run_id__stream_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{ticker}/{analysis_date}": {
       "get": {
         "tags": [

@@ -100,6 +100,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Run
+         * @description Server-Sent Events: token-level live view of an in-progress run.
+         *
+         *     Honors Last-Event-ID (sent automatically by a reconnecting browser
+         *     EventSource) so a refresh mid-run resumes rather than replaying from
+         *     the start. Polls run_events via the same WAL-mode SQLite pattern
+         *     api/db.py already documents for concurrent reader/writer access.
+         *
+         *     Registered ABOVE /runs/{ticker}/{analysis_date} on purpose: both are
+         *     two-segment paths under /runs, and FastAPI matches route order, so this
+         *     one must come first or every "stream" would be swallowed as a bogus
+         *     analysis_date and 422 instead of streaming.
+         */
+        get: operations["stream_run_runs__run_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{ticker}/{analysis_date}": {
         parameters: {
             query?: never;
@@ -537,6 +567,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_run_runs__run_id__stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

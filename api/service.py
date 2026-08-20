@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date as Date
 
-from api.schemas import AnalysisProfile, DebateLedger, LedgerTopic, Reports, TradeLevels, Verdict
+from api.schemas import AnalysisProfile, Reports, TradeLevels, Verdict
 
 
 def build_config(profile: AnalysisProfile) -> dict:
@@ -145,7 +145,8 @@ def run_analysis(
     analysis_date: Date,
     profile: AnalysisProfile,
     refresh_data: bool = False,
-) -> tuple[Verdict, Reports, DebateLedger]:
+    on_token=None,
+) -> tuple[Verdict, Reports]:
     """Execute one full analysis. Blocking, minutes long, worker-only.
 
     Note the engine freezes its own inputs per (ticker, date) via
@@ -153,8 +154,14 @@ def run_analysis(
     re-uses the first run's news, filings and market snapshot and only repeats
     the LLM reasoning. That is a separate layer from the run cache above it,
     which skips the reasoning too.
+
+    ``on_token``, when given, switches the engine call from ``propagate`` to
+    ``propagate_streaming`` so token deltas are emitted as a side effect while
+    the analysis runs. ``propagate()`` returns a ``(final_state, signal)``
+    tuple; ``propagate_streaming()`` returns just ``final_state`` — an
+    intentional, documented difference (see the engine's
+    ``propagate_streaming`` docstring), not unified here.
     """
-    from tradingagents.graph.debate_ledger import DebateLedgerExtractor
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
     config = build_config(profile)
@@ -165,17 +172,9 @@ def run_analysis(
     config["snapshot_cache_enabled"] = not refresh_data
 
     graph = TradingAgentsGraph(config=config)
-    final_state, _signal = graph.propagate(ticker, str(analysis_date))
+    if on_token is not None:
+        final_state = graph.propagate_streaming(ticker, str(analysis_date), on_token=on_token)
+    else:
+        final_state, _signal = graph.propagate(ticker, str(analysis_date))
 
-    debate_state = final_state.get("investment_debate_state") or {}
-    agent_ledger = DebateLedgerExtractor(graph.quick_thinking_llm).extract(
-        debate_state.get("bull_history", ""), debate_state.get("bear_history", "")
-    )
-    ledger = DebateLedger(
-        topics=[
-            LedgerTopic(topic=t.topic, bull_point=t.bull_point, bear_point=t.bear_point)
-            for t in agent_ledger.topics
-        ]
-    )
-
-    return _extract_verdict(final_state), _extract_reports(final_state), ledger
+    return _extract_verdict(final_state), _extract_reports(final_state)

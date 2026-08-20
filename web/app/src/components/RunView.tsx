@@ -3,12 +3,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { getRunHistory, type RunDetail } from '@/lib/api-client/client';
 import { usePollRun } from '@/lib/poll';
+import { useRunStream } from '@/lib/useRunStream';
 import { ResearchNav } from './research/ResearchNav';
 import { RunHeader } from './research/RunHeader';
 import { TheDesk } from './research/TheDesk';
 import { TheCall } from './research/TheCall';
 import { ReportsRecord } from './research/ReportsRecord';
 import { SourcesPanel } from './research/SourcesPanel';
+import { LiveStream } from './research/LiveStream';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { SiteFooter } from './landing/SiteFooter';
 
@@ -21,6 +23,8 @@ export function RunView({
 }) {
   const { data: run } = usePollRun(initialRun.id, initialRun);
   const current = run ?? initialRun;
+
+  const { eventsByNode } = useRunStream(current.id, current.status !== 'completed' && current.status !== 'failed');
 
   const historyQuery = useQuery({
     queryKey: ['history', current.ticker, current.analysis_date, current.profile],
@@ -66,6 +70,9 @@ export function RunView({
               <SourcesPanel sources={current.news_sources ?? []} />
             </div>
           </div>
+        )}
+        {current.status !== 'completed' && (
+          <LiveStream eventsByNode={eventsByNode} />
         )}
       </main>
       <SiteFooter variant="research" />

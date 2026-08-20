@@ -13,14 +13,15 @@ from __future__ import annotations
 
 from datetime import date as Date
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
-from api.db import Run, get_sessionmaker, new_run_id, utcnow
+from api.db import Run, RunEvent, get_sessionmaker, new_run_id, utcnow
 from api.news_sources import extract_news_sources
 from api.schemas import (
     AnalysisProfile,
     Reports,
     RunDetail,
+    RunEventOut,
     RunHistory,
     RunStatus,
     RunSummary,
@@ -232,6 +233,11 @@ class SqlRunStore:
                     reports=reports.model_dump(),
                 )
             )
+            # run_events is ephemeral -- the terminal state above is the
+            # permanent record, so the streamed chunks that built it are no
+            # longer needed. Deleted in the same transaction as the status
+            # update so a crash between the two can never orphan events.
+            await session.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
             await session.commit()
 
     async def mark_failed(self, run_id: str, error: str) -> None:
@@ -247,7 +253,22 @@ class SqlRunStore:
                     error=error[:2000],
                 )
             )
+            await session.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
             await session.commit()
+
+    # --- streaming -------------------------------------------------------
+
+    async def get_events_since(self, run_id: str, after_seq: int) -> list[RunEventOut]:
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                select(RunEvent)
+                .where(RunEvent.run_id == run_id, RunEvent.seq > after_seq)
+                .order_by(RunEvent.seq)
+            )
+            return [
+                RunEventOut(seq=row.seq, node_name=row.node_name, text_delta=row.text_delta)
+                for row in result.scalars()
+            ]
 
     async def count_runs_today(self, requested_by: str | None = None) -> int:
         """Spend counter for the rate limiter. Counts every run including

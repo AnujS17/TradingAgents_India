@@ -28,6 +28,23 @@ logger = logging.getLogger("api.worker")
 POLL_INTERVAL_SECONDS = 3.0
 
 
+def _sync_db_path() -> str:
+    """RunEventWriter needs a plain filesystem path; _database_url()
+    returns a SQLAlchemy async URL. Only supports the sqlite+aiosqlite
+    scheme this project actually uses (api/db.py's own docstring: SQLite
+    by default, Postgres is a future migration) -- raise clearly rather
+    than silently misbehaving if that ever changes."""
+    from api.db import _database_url
+
+    url = _database_url()
+    prefix = "sqlite+aiosqlite:///"
+    if not url.startswith(prefix):
+        raise RuntimeError(
+            f"RunEventWriter requires a sqlite+aiosqlite database URL, got: {url}"
+        )
+    return url[len(prefix):]
+
+
 async def execute_run(store: SqlRunStore, row: Run) -> None:
     """Run one analysis and record the outcome.
 
@@ -36,8 +53,11 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
     the user polling an answer that never arrives.
     """
     from api.service import run_analysis
+    from api.streaming import RunEventWriter
 
     logger.info("running %s %s (%s)", row.ticker, row.analysis_date, row.profile)
+
+    writer = RunEventWriter(_sync_db_path(), row.id)
     try:
         # The engine call is synchronous and CPU/IO-bound for minutes. Pushing
         # it to a thread keeps this loop responsive — otherwise the event loop
@@ -49,12 +69,17 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
             row.analysis_date,
             AnalysisProfile(row.profile),
             row.refresh_data,
+            writer.on_token,
         )
     except Exception as exc:  # noqa: BLE001 - record and continue
         logger.exception("run %s failed", row.id)
+        writer.flush_all()
+        writer.close()
         await store.mark_failed(row.id, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
         return
 
+    writer.flush_all()
+    writer.close()
     await store.mark_completed(row.id, verdict, reports)
     logger.info("completed %s (%s)", row.id, verdict.rating or "no rating")
 

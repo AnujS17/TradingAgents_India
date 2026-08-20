@@ -15,7 +15,14 @@ from typing import Annotated, Protocol
 from fastapi import Depends
 
 from api.db import new_run_id
-from api.schemas import AnalysisProfile, RunDetail, RunHistory, RunStatus, RunSummary
+from api.schemas import (
+    AnalysisProfile,
+    RunDetail,
+    RunEventOut,
+    RunHistory,
+    RunStatus,
+    RunSummary,
+)
 
 
 class RunStore(Protocol):
@@ -50,6 +57,8 @@ class RunStore(Protocol):
     async def list(
         self, ticker: str | None, limit: int, offset: int
     ) -> list[RunSummary]: ...
+
+    async def get_events_since(self, run_id: str, after_seq: int) -> list[RunEventOut]: ...
 
 
 def _rating_of(run: RunDetail) -> str | None:
@@ -193,6 +202,13 @@ class InMemoryRunStore:
             RunSummary.model_validate(r, from_attributes=True)
             for r in runs[offset : offset + limit]
         ]
+
+    async def get_events_since(self, run_id: str, after_seq: int) -> list[RunEventOut]:
+        # This store never captures streamed token events (it has no
+        # run_events table, nor any equivalent), so there is truthfully
+        # nothing to return regardless of run_id or after_seq. An empty list
+        # is the honest answer, not a stub — do not fabricate events here.
+        return []
 
 
 _store: RunStore | None = None

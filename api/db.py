@@ -23,6 +23,7 @@ from sqlalchemy import (
     Date as SADate,
     DateTime,
     Index,
+    Integer,
     String,
     Text,
     event,
@@ -73,6 +74,26 @@ class Run(Base):
         Index("ix_runs_question", "ticker", "analysis_date", "profile", "created_at"),
         # The worker's claim query.
         Index("ix_runs_claim", "status", "created_at"),
+    )
+
+
+class RunEvent(Base):
+    """Ephemeral: one run's streamed token chunks, deleted once that run
+    reaches completed or failed (see docs/superpowers/specs/
+    2026-08-19-live-streaming-design.md). Never a permanent record --
+    Reports carries the permanent record."""
+
+    __tablename__ = "run_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    node_name: Mapped[str] = mapped_column(String(64))
+    text_delta: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_run_events_run_seq", "run_id", "seq"),
     )
 
 

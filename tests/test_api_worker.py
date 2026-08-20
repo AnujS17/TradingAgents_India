@@ -92,7 +92,7 @@ def test_worker_executes_a_run_and_stores_the_result(store, monkeypatch):
     monkeypatch.setattr(
         api.service,
         "run_analysis",
-        lambda ticker, day, profile, refresh: (
+        lambda ticker, day, profile, refresh, *a, **k: (
             Verdict(rating="Underweight", price_target=3200.0),
             Reports(final_decision="Reduce into strength."),
         ),
@@ -207,7 +207,7 @@ def test_refresh_data_reaches_the_worker(store, monkeypatch):
     monkeypatch.setattr(
         api.service,
         "run_analysis",
-        lambda ticker, day, profile, refresh: (
+        lambda ticker, day, profile, refresh, *a, **k: (
             seen.update(refresh=refresh),
             (Verdict(), Reports()),
         )[1],
