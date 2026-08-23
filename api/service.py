@@ -17,6 +17,12 @@ from datetime import date as Date
 from api.schemas import AnalysisProfile, Reports, TradeLevels, Verdict
 
 
+class RunCancelled(Exception):
+    """The run was stopped by user request (POST /runs/{id}/stop) before it
+    finished. Not an error -- api/worker.py catches this specifically to
+    route to mark_cancelled() instead of mark_failed()."""
+
+
 def build_config(profile: AnalysisProfile) -> dict:
     """Engine config for a profile.
 
@@ -146,6 +152,8 @@ def run_analysis(
     profile: AnalysisProfile,
     refresh_data: bool = False,
     on_token=None,
+    should_stop=None,
+    time_horizon: str | None = None,
 ) -> tuple[Verdict, Reports]:
     """Execute one full analysis. Blocking, minutes long, worker-only.
 
@@ -161,8 +169,20 @@ def run_analysis(
     tuple; ``propagate_streaming()`` returns just ``final_state`` — an
     intentional, documented difference (see the engine's
     ``propagate_streaming`` docstring), not unified here.
+
+    ``should_stop``, when given, is threaded through to ``propagate_streaming``
+    (only meaningful there — the non-streaming ``propagate()`` path has no
+    per-chunk checkpoint to attach it to). Raises ``RunCancelled`` instead of
+    returning if the run was stopped, translated here from the engine's own
+    ``StreamCancelled`` so nothing outside this module needs to import
+    from ``tradingagents`` directly (this module's own docstring: it is the
+    sole seam between the HTTP layer and the engine).
+
+    ``time_horizon``, when given, is forwarded as ``investment_horizon`` to
+    the engine, which threads it into state for the Portfolio Manager only —
+    it does not change what data the analysts fetch or read.
     """
-    from tradingagents.graph.trading_graph import TradingAgentsGraph
+    from tradingagents.graph.trading_graph import StreamCancelled, TradingAgentsGraph
 
     config = build_config(profile)
     # refresh_data=True busts the day's snapshot so news/filings/social are
@@ -173,8 +193,19 @@ def run_analysis(
 
     graph = TradingAgentsGraph(config=config)
     if on_token is not None:
-        final_state = graph.propagate_streaming(ticker, str(analysis_date), on_token=on_token)
+        try:
+            final_state = graph.propagate_streaming(
+                ticker,
+                str(analysis_date),
+                on_token=on_token,
+                should_stop=should_stop,
+                investment_horizon=time_horizon,
+            )
+        except StreamCancelled as exc:
+            raise RunCancelled(str(exc)) from exc
     else:
-        final_state, _signal = graph.propagate(ticker, str(analysis_date))
+        final_state, _signal = graph.propagate(
+            ticker, str(analysis_date), investment_horizon=time_horizon
+        )
 
     return _extract_verdict(final_state), _extract_reports(final_state)

@@ -24,7 +24,8 @@ export function RunView({
   const { data: run } = usePollRun(initialRun.id, initialRun);
   const current = run ?? initialRun;
 
-  const { eventsByNode } = useRunStream(current.id, current.status !== 'completed' && current.status !== 'failed');
+  const isInProgress = current.status === 'queued' || current.status === 'running';
+  const { eventsByNode } = useRunStream(current.id, isInProgress);
 
   const historyQuery = useQuery({
     queryKey: ['history', current.ticker, current.analysis_date, current.profile],

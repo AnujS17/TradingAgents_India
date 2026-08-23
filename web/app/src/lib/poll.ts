@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getRun, type RunDetail } from './api-client/client';
 
-const TERMINAL_STATUSES: RunDetail['status'][] = ['completed', 'failed'];
+const TERMINAL_STATUSES: RunDetail['status'][] = ['completed', 'failed', 'cancelled'];
 
 export function usePollRun(runId: string | undefined, initialData?: RunDetail) {
   return useQuery({

@@ -69,6 +69,18 @@ class RunEventWriter:
         if crossed_chars or crossed_time:
             self._flush_node(node_name)
 
+    def should_stop(self) -> bool:
+        """Read the run's stop_requested flag straight from the runs table
+        via this same connection -- the API process sets it through the
+        async SQLAlchemy engine on the same on-disk file; WAL mode (see
+        api/db.py) is exactly what makes that write visible to this
+        separate sync connection in a different process. The `runs` table
+        itself is owned by api/db.py; this only ever reads it."""
+        row = self._conn.execute(
+            "SELECT stop_requested FROM runs WHERE id = ?", (self._run_id,)
+        ).fetchone()
+        return bool(row and row[0])
+
     def flush_all(self) -> None:
         for node_name in list(self._buffers.keys()):
             self._flush_node(node_name)

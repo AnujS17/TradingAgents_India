@@ -249,6 +249,10 @@ def test_llm_prompt_still_receives_full_news_content(monkeypatch):
 
 @pytest.mark.unit
 def test_initial_state_includes_news_synthesis():
-    state = Propagator().create_initial_state("ORCL", "2026-06-03")
+    # Already-qualified ticker: this test is about the news_synthesis key's
+    # presence, not ticker resolution, so it should not depend on live
+    # network/real ticker validity (a bare "ORCL" is a real NYSE ticker and
+    # would now correctly raise TickerNotFoundError).
+    state = Propagator().create_initial_state("ORCL.NS", "2026-06-03")
 
     assert state["news_synthesis"] == ""

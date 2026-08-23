@@ -225,6 +225,33 @@ def test_refresh_data_reaches_the_worker(store, monkeypatch):
 
 
 @pytest.mark.unit
+def test_requested_time_horizon_reaches_the_worker(store, monkeypatch):
+    """Same hand-off-through-the-queue guard as refresh_data, for the
+    optional holding-period parameter."""
+    import api.service
+
+    seen = {}
+    monkeypatch.setattr(
+        api.service,
+        "run_analysis",
+        lambda ticker, day, profile, refresh, on_token, should_stop, horizon=None: (
+            seen.update(horizon=horizon),
+            (Verdict(), Reports()),
+        )[1],
+    )
+
+    async def scenario():
+        from api.worker import execute_run
+
+        await store.create("TCS.NS", DAY, AnalysisProfile.FAST, time_horizon="3-6 months")
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+
+    _run(scenario())
+    assert seen["horizon"] == "3-6 months"
+
+
+@pytest.mark.unit
 def test_history_returns_correct_run_summaries(store, monkeypatch):
     """Fix regression guard: history() validates RunSummary directly from the
     ORM row instead of building a full RunDetail (via _to_detail, which runs

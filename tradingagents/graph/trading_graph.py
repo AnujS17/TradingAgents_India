@@ -115,6 +115,17 @@ def _dedupe_tool_call(request, execute):
     )
 
 
+class StreamCancelled(Exception):
+    """Raised by propagate_streaming() when should_stop() reports true
+    between streamed chunks. Not an error -- a deliberate stop request.
+
+    api/service.py (the only module outside tradingagents that imports it)
+    catches this and translates it to its own RunCancelled before it
+    reaches api/worker.py, so nothing outside tradingagents ever needs to
+    import from here directly (api/service.py's own module docstring: it
+    is the sole seam between the HTTP layer and the engine)."""
+
+
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
 
@@ -440,7 +451,9 @@ class TradingAgentsGraph:
         if updates:
             self.memory_log.batch_update_with_outcomes(updates)
 
-    def propagate(self, company_name, trade_date, asset_type: str = "stock"):
+    def propagate(
+        self, company_name, trade_date, asset_type: str = "stock", investment_horizon: str | None = None
+    ):
         """Run the trading agents graph for a company on a specific date.
 
         ``asset_type`` selects between the stock pipeline (default) and the
@@ -449,6 +462,11 @@ class TradingAgentsGraph:
         ``checkpoint_enabled`` is set in config, the graph is recompiled with
         a per-ticker SqliteSaver so a crashed run can resume from the last
         successful node on a subsequent invocation with the same ticker+date.
+
+        ``investment_horizon``, when given, is optional holding-period
+        guidance for the Portfolio Manager only (see
+        ``Propagator.create_initial_state``) — it does not affect what any
+        analyst fetches or reads.
         """
         # Resolve the ticker once, here, before anything keys off it. Every
         # identity in this method is derived from company_name: self.ticker
@@ -497,14 +515,24 @@ class TradingAgentsGraph:
                 logger.info("Starting fresh for %s on %s", company_name, trade_date)
 
         try:
-            return self._run_graph(company_name, trade_date, asset_type=asset_type)
+            return self._run_graph(
+                company_name, trade_date, asset_type=asset_type, investment_horizon=investment_horizon
+            )
         finally:
             if self._checkpointer_ctx is not None:
                 self._checkpointer_ctx.__exit__(None, None, None)
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
 
-    def propagate_streaming(self, company_name, trade_date, asset_type: str = "stock", on_token=None):
+    def propagate_streaming(
+        self,
+        company_name,
+        trade_date,
+        asset_type: str = "stock",
+        on_token=None,
+        should_stop=None,
+        investment_horizon: str | None = None,
+    ):
         """Like propagate(), but also streams token-level chunks through
         on_token(node_name: str, delta: str) as the graph executes.
 
@@ -513,6 +541,18 @@ class TradingAgentsGraph:
         never allowed to raise into this method's control flow -- a failing
         callback degrades to "no live view for that chunk," never fails the
         run itself (see docs/superpowers/specs/2026-08-19-live-streaming-design.md).
+
+        should_stop, when given, is called once per streamed chunk (both
+        stream_mode="values" node-completions and stream_mode="messages"
+        token deltas -- so typically once per token, not once per node) and,
+        if it returns true, raises StreamCancelled to unwind the graph.stream()
+        generator early. This is cooperative cancellation, not a kill signal:
+        an in-flight LLM call for the currently-executing node still runs to
+        that call's own completion before the next chunk (and therefore the
+        next check) arrives -- there is no way to interrupt a call already in
+        flight without the node itself checking. In practice this resolves
+        within about one token's latency because "messages" mode yields far
+        more often than "values" mode does.
 
         Returns the merged final-state dict (the same final_state propagate()
         builds internally before pairing it with a processed signal) -- not
@@ -536,7 +576,11 @@ class TradingAgentsGraph:
 
         past_context = self.memory_log.get_past_context(company_name)
         init_agent_state = self.propagator.create_initial_state(
-            company_name, trade_date, asset_type=asset_type, past_context=past_context
+            company_name,
+            trade_date,
+            asset_type=asset_type,
+            past_context=past_context,
+            investment_horizon=investment_horizon,
         )
         args = self.propagator.get_graph_args()
         args.pop("stream_mode", None)  # this method controls stream_mode itself
@@ -545,6 +589,8 @@ class TradingAgentsGraph:
         for stream_mode, chunk in self.graph.stream(
             init_agent_state, stream_mode=["values", "messages"], **args
         ):
+            if should_stop is not None and should_stop():
+                raise StreamCancelled(f"{company_name} analysis stopped by request")
             if stream_mode == "values":
                 final_state.update(chunk)
             elif stream_mode == "messages" and on_token is not None:
@@ -561,12 +607,18 @@ class TradingAgentsGraph:
         self._log_state(trade_date, final_state)
         return final_state
 
-    def _run_graph(self, company_name, trade_date, asset_type: str = "stock"):
+    def _run_graph(
+        self, company_name, trade_date, asset_type: str = "stock", investment_horizon: str | None = None
+    ):
         """Execute the graph and write the resulting state to disk and memory log."""
         # Initialize state — inject memory log context for PM.
         past_context = self.memory_log.get_past_context(company_name)
         init_agent_state = self.propagator.create_initial_state(
-            company_name, trade_date, asset_type=asset_type, past_context=past_context
+            company_name,
+            trade_date,
+            asset_type=asset_type,
+            past_context=past_context,
+            investment_horizon=investment_horizon,
         )
         args = self.propagator.get_graph_args()
 

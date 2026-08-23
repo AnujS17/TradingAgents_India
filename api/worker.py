@@ -52,7 +52,7 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
     would kill the worker and leave the run stuck in ``running`` forever, with
     the user polling an answer that never arrives.
     """
-    from api.service import run_analysis
+    from api.service import RunCancelled, run_analysis
     from api.streaming import RunEventWriter
 
     logger.info("running %s %s (%s)", row.ticker, row.analysis_date, row.profile)
@@ -70,7 +70,15 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
             AnalysisProfile(row.profile),
             row.refresh_data,
             writer.on_token,
+            writer.should_stop,
+            row.requested_time_horizon,
         )
+    except RunCancelled:
+        logger.info("run %s stopped by request", row.id)
+        writer.flush_all()
+        writer.close()
+        await store.mark_cancelled(row.id)
+        return
     except Exception as exc:  # noqa: BLE001 - record and continue
         logger.exception("run %s failed", row.id)
         writer.flush_all()

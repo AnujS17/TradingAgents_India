@@ -70,6 +70,49 @@
         }
       }
     },
+    "/runs/{run_id}/stop": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Stop Run",
+        "description": "Ask a queued or running analysis to stop.\n\nCooperative, not instant, for a running analysis: the worker checks a\nflag once per streamed chunk (see RunEventWriter.should_stop() and\npropagate_streaming's loop), typically within about one token's\nlatency but never mid-way through an LLM call already in flight. A\nstill-queued run (no worker has claimed it yet) is cancelled outright.\n\n404 covers both \"no such run\" and \"this run already finished\" \u2014 the\ncaller cannot stop what is not running either way, and doesn't need to\ndistinguish the two to know that.",
+        "operationId": "stop_run_runs__run_id__stop_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{ticker}/{analysis_date}/history": {
       "get": {
         "tags": [
@@ -407,6 +450,22 @@
             "title": "Refresh Data",
             "description": "Also re-fetch news, filings and social data instead of replaying the day's snapshot. Implies force. Use when something has actually happened since the last run; leave false to re-reason over identical inputs.",
             "default": false
+          },
+          "time_horizon": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Horizon",
+            "description": "Optional investor holding-period guidance for the Portfolio Manager, e.g. '3-6 months'. Steers how the rating and price target are framed; does not change what data the analysts see, and the Portfolio Manager will say so rather than force a verdict if the evidence points to a different horizon. Implies force, so a request with a horizon never silently reuses a run cached for a different (or no) horizon.",
+            "examples": [
+              "3-6 months"
+            ]
           }
         },
         "type": "object",
@@ -729,6 +788,18 @@
               }
             ]
           },
+          "requested_time_horizon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Time Horizon",
+            "description": "The holding-period guidance the caller supplied, if any. Compare against verdict.time_horizon: the Portfolio Manager may state a different one when the evidence disagrees."
+          },
           "news_sources": {
             "items": {
               "$ref": "#/components/schemas/NewsSource"
@@ -825,7 +896,8 @@
           "queued",
           "running",
           "completed",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "RunStatus"
       },

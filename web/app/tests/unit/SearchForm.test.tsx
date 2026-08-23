@@ -88,6 +88,37 @@ describe('SearchForm', () => {
     expect(analyzeRun).toHaveBeenCalledWith({ ticker: 'RELIANCE', profile: 'fast' });
   });
 
+  it('sends time_horizon, trimmed, when the field is filled in', async () => {
+    vi.mocked(analyzeRun).mockResolvedValue({
+      cached: true,
+      accepted: { id: 'r6', status: 'completed', poll_url: '/runs/r6', estimated_seconds: 0 },
+    });
+
+    render(<SearchForm />);
+    await userEvent.type(screen.getByLabelText(/Ticker/), 'RELIANCE');
+    await userEvent.type(screen.getByLabelText(/Time horizon/), '  3-6 months  ');
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
+
+    expect(analyzeRun).toHaveBeenCalledWith({
+      ticker: 'RELIANCE',
+      profile: 'fast',
+      time_horizon: '3-6 months',
+    });
+  });
+
+  it('omits time_horizon entirely when the field is left blank', async () => {
+    vi.mocked(analyzeRun).mockResolvedValue({
+      cached: true,
+      accepted: { id: 'r7', status: 'completed', poll_url: '/runs/r7', estimated_seconds: 0 },
+    });
+
+    render(<SearchForm />);
+    await userEvent.type(screen.getByLabelText(/Ticker/), 'RELIANCE');
+    await userEvent.click(screen.getByRole('button', { name: /Start researching/ }));
+
+    expect(analyzeRun).toHaveBeenCalledWith({ ticker: 'RELIANCE', profile: 'fast' });
+  });
+
   it('shows the server rate-limit message and does not navigate on 429', async () => {
     vi.mocked(analyzeRun).mockRejectedValue(new RateLimitError('Daily limit reached.', 3600));
 

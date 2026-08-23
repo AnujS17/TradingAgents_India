@@ -52,6 +52,18 @@ def create_portfolio_manager(llm):
             else ""
         )
 
+        investment_horizon = state.get("investment_horizon", "")
+        horizon_line = (
+            f"\n**Requested Holding Period**: {investment_horizon}\n"
+            "Use this as a lens for the rating, price target and time "
+            "horizon you state, but do not force a match the evidence "
+            "doesn't support -- if the debate points to a materially "
+            "different horizon, say so explicitly rather than silently "
+            "complying.\n"
+            if investment_horizon
+            else ""
+        )
+
         prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading decision.
 
 {instrument_context}
@@ -64,7 +76,7 @@ def create_portfolio_manager(llm):
 - **Hold**: Maintain current position, no action needed
 - **Underweight**: Reduce exposure, take partial profits
 - **Sell**: Exit position or avoid entry
-
+{horizon_line}
 **Context:**
 - Research Manager's investment plan: **{research_plan}**
 - Trader's transaction proposal: **{trader_plan}**

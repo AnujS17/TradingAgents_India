@@ -664,14 +664,19 @@ class TestPortfolioManagerInjection:
     # past_context in initial state
 
     def test_past_context_in_initial_state(self):
+        # Already-qualified ticker (has a ".") short-circuits resolve_ticker_symbol
+        # before any yfinance call -- this test is about past_context plumbing,
+        # not ticker resolution, so it should not depend on live network/real
+        # ticker validity at all. A bare "NVDA" (a real NYSE ticker) would now
+        # correctly raise TickerNotFoundError -- this tool only resolves NSE/BSE.
         propagator = Propagator()
-        state = propagator.create_initial_state("NVDA", "2026-01-10", past_context="some context")
+        state = propagator.create_initial_state("NVDA.NS", "2026-01-10", past_context="some context")
         assert "past_context" in state
         assert state["past_context"] == "some context"
 
     def test_past_context_defaults_to_empty(self):
         propagator = Propagator()
-        state = propagator.create_initial_state("NVDA", "2026-01-10")
+        state = propagator.create_initial_state("NVDA.NS", "2026-01-10")
         assert state["past_context"] == ""
 
     # PM prompt
@@ -820,7 +825,7 @@ class TestLegacyRemoval:
 
         fake_state = {
             "final_trade_decision": "Rating: Buy\nBuy NVDA.",
-            "company_of_interest": "NVDA",
+            "company_of_interest": "NVDA.NS",
             "trade_date": "2026-01-10",
             "market_report": "",
             "sentiment_report": "",
@@ -853,8 +858,12 @@ class TestLegacyRemoval:
         mock_graph._run_graph = functools.partial(
             TradingAgentsGraph._run_graph, mock_graph
         )
-        TradingAgentsGraph.propagate(mock_graph, "NVDA", "2026-01-10")
+        # Already-qualified so propagate()'s own resolve_ticker_symbol call
+        # short-circuits (no live yfinance dependency, and a bare "NVDA"
+        # would now correctly raise TickerNotFoundError -- see the fix for
+        # the HAL/MCX-resolve-to-a-US-company bug).
+        TradingAgentsGraph.propagate(mock_graph, "NVDA.NS", "2026-01-10")
         entries = mock_graph.memory_log.load_entries()
         assert len(entries) == 1
-        assert entries[0]["ticker"] == "NVDA"
+        assert entries[0]["ticker"] == "NVDA.NS"
         assert entries[0]["pending"] is True

@@ -18,6 +18,7 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class AnalysisProfile(str, Enum):
@@ -66,6 +67,18 @@ class AnalysisRequest(BaseModel):
         "actually happened since the last run; leave false to re-reason over "
         "identical inputs.",
     )
+    time_horizon: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional investor holding-period guidance for the "
+        "Portfolio Manager, e.g. '3-6 months'. Steers how the rating and "
+        "price target are framed; does not change what data the analysts "
+        "see, and the Portfolio Manager will say so rather than force a "
+        "verdict if the evidence points to a different horizon. Implies "
+        "force, so a request with a horizon never silently reuses a run "
+        "cached for a different (or no) horizon.",
+        examples=["3-6 months"],
+    )
 
     @model_validator(mode="after")
     def refresh_implies_force(self) -> "AnalysisRequest":
@@ -73,6 +86,22 @@ class AnalysisRequest(BaseModel):
         if self.refresh_data:
             self.force = True
         return self
+
+    @model_validator(mode="after")
+    def time_horizon_implies_force(self) -> "AnalysisRequest":
+        # A horizon-scoped request isn't interchangeable with a cached run
+        # that used a different (or no) horizon -- see field description.
+        if self.time_horizon:
+            self.force = True
+        return self
+
+    @field_validator("time_horizon")
+    @classmethod
+    def normalise_time_horizon(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @field_validator("ticker")
     @classmethod
@@ -172,6 +201,12 @@ class RunSummary(BaseModel):
 class RunDetail(RunSummary):
     verdict: Verdict | None = None
     reports: Reports | None = None
+    requested_time_horizon: str | None = Field(
+        default=None,
+        description="The holding-period guidance the caller supplied, if "
+        "any. Compare against verdict.time_horizon: the Portfolio Manager "
+        "may state a different one when the evidence disagrees.",
+    )
     news_sources: list[NewsSource] = Field(
         default_factory=list,
         description="Articles the News/Sentiment reports were grounded in. "

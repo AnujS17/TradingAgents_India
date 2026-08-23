@@ -43,6 +43,7 @@ def _to_detail(row: Run) -> RunDetail:
         verdict=Verdict.model_validate(row.verdict) if row.verdict else None,
         reports=reports,
         news_sources=extract_news_sources(reports) if reports else [],
+        requested_time_horizon=row.requested_time_horizon,
     )
 
 
@@ -74,11 +75,11 @@ class SqlRunStore:
     async def _siblings(
         self, session, ticker: str, analysis_date: Date, profile: AnalysisProfile
     ) -> list[Run]:
-        """Every non-failed run for one question, newest first.
+        """Every completed-or-in-flight run for one question, newest first.
 
-        Failed runs are excluded everywhere: one transient vendor outage must
-        not poison a ticker for the rest of the day, nor inflate the run count
-        a user sees.
+        Failed and cancelled runs are excluded everywhere: neither produced
+        a real answer, so neither should inflate the run count a user sees
+        or poison a ticker's comparison history for the rest of the day.
         """
         result = await session.execute(
             select(Run)
@@ -86,7 +87,7 @@ class SqlRunStore:
                 Run.ticker == ticker,
                 Run.analysis_date == analysis_date,
                 Run.profile == profile.value,
-                Run.status != RunStatus.FAILED.value,
+                Run.status.not_in([RunStatus.FAILED.value, RunStatus.CANCELLED.value]),
             )
             .order_by(Run.created_at.desc(), Run.id.desc())
         )
@@ -99,6 +100,7 @@ class SqlRunStore:
         profile: AnalysisProfile,
         refresh_data: bool = False,
         requested_by: str | None = None,
+        time_horizon: str | None = None,
     ) -> RunDetail:
         async with self._sessionmaker() as session:
             row = Run(
@@ -110,6 +112,7 @@ class SqlRunStore:
                 created_at=utcnow(),
                 refresh_data=refresh_data,
                 requested_by=requested_by,
+                requested_time_horizon=time_horizon,
             )
             session.add(row)
             await session.commit()
@@ -237,6 +240,52 @@ class SqlRunStore:
             # permanent record, so the streamed chunks that built it are no
             # longer needed. Deleted in the same transaction as the status
             # update so a crash between the two can never orphan events.
+            await session.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
+            await session.commit()
+
+    async def request_stop(self, run_id: str) -> RunDetail | None:
+        """Ask a queued or running analysis to stop.
+
+        A queued run (never claimed by a worker) is cancelled directly --
+        nothing is executing yet to cooperatively check a flag. A running
+        run gets stop_requested=True; the worker picks it up via
+        RunEventWriter.should_stop(), polled once per streamed chunk in
+        propagate_streaming (api/streaming.py, tradingagents/graph/
+        trading_graph.py) -- cooperative, typically within about one
+        token's latency, not instant.
+
+        Returns the updated row, or None if the run doesn't exist or has
+        already reached a terminal state (nothing left to stop).
+        """
+        async with self._sessionmaker() as session:
+            row = await session.get(Run, run_id)
+            if row is None:
+                return None
+
+            if row.status == RunStatus.QUEUED.value:
+                await session.execute(
+                    update(Run)
+                    .where(Run.id == run_id, Run.status == RunStatus.QUEUED.value)
+                    .values(status=RunStatus.CANCELLED.value, completed_at=utcnow())
+                )
+            elif row.status == RunStatus.RUNNING.value:
+                await session.execute(
+                    update(Run).where(Run.id == run_id).values(stop_requested=True)
+                )
+            else:
+                return None  # already completed/failed/cancelled -- nothing to stop
+
+            await session.commit()
+            await session.refresh(row)
+            return _to_detail(row)
+
+    async def mark_cancelled(self, run_id: str) -> None:
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(Run)
+                .where(Run.id == run_id)
+                .values(status=RunStatus.CANCELLED.value, completed_at=utcnow())
+            )
             await session.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
             await session.commit()
 

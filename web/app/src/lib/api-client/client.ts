@@ -44,6 +44,7 @@ export interface AnalyzePayload {
   profile?: AnalysisProfile;
   force?: boolean;
   refresh_data?: boolean;
+  time_horizon?: string;
 }
 
 export async function analyzeRun(payload: AnalyzePayload): Promise<AnalyzeResult> {
@@ -99,6 +100,18 @@ export async function getRunHistory(
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `Failed to fetch history for ${ticker} ${analysisDate}`);
   return (await res.json()) as RunHistory;
+}
+
+/** Cooperative, not instant for a running analysis -- see the endpoint's
+ * own docstring. 404 covers both "no such run" and "already finished";
+ * either way there is nothing left to stop. */
+export async function stopRun(id: string): Promise<RunDetail> {
+  const res = await fetch(`${API_BASE_URL}/runs/${id}/stop`, { method: 'POST' });
+  if (res.status === 404) {
+    throw new ApiError(404, 'Run not found, or it has already finished');
+  }
+  if (!res.ok) throw new ApiError(res.status, `Failed to stop run ${id}`);
+  return (await res.json()) as RunDetail;
 }
 
 export async function listRuns(

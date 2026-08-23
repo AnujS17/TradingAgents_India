@@ -56,6 +56,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Run
+         * @description Ask a queued or running analysis to stop.
+         *
+         *     Cooperative, not instant, for a running analysis: the worker checks a
+         *     flag once per streamed chunk (see RunEventWriter.should_stop() and
+         *     propagate_streaming's loop), typically within about one token's
+         *     latency but never mid-way through an LLM call already in flight. A
+         *     still-queued run (no worker has claimed it yet) is cancelled outright.
+         *
+         *     404 covers both "no such run" and "this run already finished" — the
+         *     caller cannot stop what is not running either way, and doesn't need to
+         *     distinguish the two to know that.
+         */
+        post: operations["stop_run_runs__run_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{ticker}/{analysis_date}/history": {
         parameters: {
             query?: never;
@@ -212,6 +242,12 @@ export interface components {
              * @default false
              */
             refresh_data: boolean;
+            /**
+             * Time Horizon
+             * @description Optional investor holding-period guidance for the Portfolio Manager, e.g. '3-6 months'. Steers how the rating and price target are framed; does not change what data the analysts see, and the Portfolio Manager will say so rather than force a verdict if the evidence points to a different horizon. Implies force, so a request with a horizon never silently reuses a run cached for a different (or no) horizon.
+             * @example 3-6 months
+             */
+            time_horizon?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -326,6 +362,11 @@ export interface components {
             verdict?: components["schemas"]["Verdict"] | null;
             reports?: components["schemas"]["Reports"] | null;
             /**
+             * Requested Time Horizon
+             * @description The holding-period guidance the caller supplied, if any. Compare against verdict.time_horizon: the Portfolio Manager may state a different one when the evidence disagrees.
+             */
+            requested_time_horizon?: string | null;
+            /**
              * News Sources
              * @description Articles the News/Sentiment reports were grounded in. Always a list — empty means nothing parsed, not an error.
              */
@@ -372,7 +413,7 @@ export interface components {
          * RunStatus
          * @enum {string}
          */
-        RunStatus: "queued" | "running" | "completed" | "failed";
+        RunStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
         /**
          * RunSummary
          * @description Lightweight view — list endpoints and poll responses use this.
@@ -502,6 +543,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_run_runs__run_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetail"];
                 };
             };
             /** @description Validation Error */

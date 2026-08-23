@@ -26,6 +26,7 @@ class Propagator:
         trade_date: str,
         asset_type: str = "stock",
         past_context: str = "",
+        investment_horizon: str | None = None,
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
         # Resolve a bare ticker (e.g. "RELIANCE") to the suffixed symbol
@@ -55,6 +56,10 @@ class Propagator:
             ),
             "trade_date": str(trade_date),
             "past_context": past_context,
+            # Optional user-requested holding-period guidance, consumed only
+            # by the Portfolio Manager -- never reaches any analyst's
+            # deterministic pre-fetch, so it cannot skew what data is seen.
+            "investment_horizon": investment_horizon or "",
             "investment_debate_state": InvestDebateState(
                 {
                     "bull_history": "",

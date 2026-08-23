@@ -204,10 +204,20 @@ def _clean_identity_value(value: Any) -> Optional[str]:
     return cleaned
 
 
-# Suffixes tried, in order, when a bare ticker (e.g. "RELIANCE" instead of
-# "RELIANCE.NS") doesn't resolve on yfinance. NSE first — it's the more
-# liquid of the two exchanges for most dual-listed Indian names.
+# Suffixes tried, in order, for a bare ticker (e.g. "RELIANCE" instead of
+# "RELIANCE.NS"). NSE first — it's the more liquid of the two exchanges for
+# most dual-listed Indian names.
 _INDIA_EXCHANGE_SUFFIXES = (".NS", ".BO")
+
+
+class TickerNotFoundError(Exception):
+    """Raised by resolve_ticker_symbol() when a bare stock ticker was
+    confirmed absent on both NSE and BSE (not a network/API failure --
+    both exchanges genuinely answered "no such ticker"). This is meant to
+    propagate all the way out of the run: api/worker.py's existing
+    broad exception handler already turns any uncaught exception into a
+    clear failed-run error message, so raising here is the correct way
+    to make this "return an error, don't proceed" (no new plumbing)."""
 
 
 @contextlib.contextmanager
@@ -247,32 +257,64 @@ def resolve_ticker_symbol(ticker: str, asset_type: str = "stock") -> str:
 
     Already-qualified tickers (containing "." or "-", e.g. "CNC.TO", "BTC-USD")
     and crypto assets are returned unchanged — this only guesses NSE/BSE
-    suffixes for bare stock symbols. Best-effort: any failure (network,
-    rate limit) returns the ticker unchanged rather than blocking the run.
+    suffixes for bare stock symbols.
+
+    Only NSE (.NS) and BSE (.BO) are ever tried or accepted for a stock —
+    the bare, unsuffixed ticker is deliberately NEVER checked or returned
+    as a resolved answer. It used to be tried first, which meant any bare
+    ticker that also happens to be a real symbol on a different exchange
+    (e.g. "HAL" is Halliburton on NYSE; "MCX" is a separate US-listed
+    company) silently resolved to that WRONG company before NSE/BSE were
+    ever tried, and the whole run then analyzed it. This tool analyzes
+    Indian-listed equities only; a foreign collision is never an
+    acceptable answer.
+
+    Raises TickerNotFoundError if the ticker was confirmed absent on both
+    NSE and BSE (both exchanges genuinely answered "not found", not a
+    network error) — this is intentional and meant to fail the run loudly
+    rather than proceed with an unresolved or foreign ticker.
+
+    Best-effort only for genuine infrastructure trouble: if every probe
+    raised (total network/API failure, so NSE/BSE were never actually
+    checked), returns the ticker unchanged rather than blocking the run
+    over something that isn't a "this ticker doesn't exist" answer at all.
     """
     normalized = ticker.strip().upper()
     if asset_type == "crypto" or "." in normalized or "-" in normalized:
         return normalized
 
     # A 404 on a probe candidate is the expected answer, not an error: this
-    # loop asks Yahoo "does BLUEJET exist? BLUEJET.NS? BLUEJET.BO?" and stops
-    # at the first hit. yfinance logs each miss to stderr itself, so a normal
+    # loop asks Yahoo "does BLUEJET.NS exist? BLUEJET.BO?" and stops at the
+    # first hit. yfinance logs each miss to stderr itself, so a normal
     # resolution printed an alarming
-    # `HTTP Error 404: ... Quote not found for symbol: BLUEJET` at the top of
-    # every run that used a bare ticker, even though resolution then
-    # succeeded (observed on the BLUEJET run, 2026-08-11). Silence yfinance
+    # `HTTP Error 404: ... Quote not found for symbol: BLUEJET.NS` at the top
+    # of every run, even though resolution then succeeded on the next
+    # candidate (observed on the BLUEJET run, 2026-08-11). Silence yfinance
     # for the duration of the probe only, and restore it afterwards so real
     # yfinance problems elsewhere are still reported.
+    checked_at_least_one_exchange = False
     with _muted_logger("yfinance"):
-        for candidate in (normalized, *(f"{normalized}{suffix}" for suffix in _INDIA_EXCHANGE_SUFFIXES)):
+        for suffix in _INDIA_EXCHANGE_SUFFIXES:
+            candidate = f"{normalized}{suffix}"
             try:
                 info = yf.Ticker(candidate).info or {}
-            except Exception as exc:  # noqa: BLE001 — fail open, never block the run
+            except Exception as exc:  # noqa: BLE001 — network trouble, not a "not found" answer
                 logger.debug("Ticker resolution check failed for %s: %s", candidate, exc)
                 continue
+            checked_at_least_one_exchange = True
             if info.get("previousClose") is not None:
                 return candidate
 
+    if checked_at_least_one_exchange:
+        raise TickerNotFoundError(
+            f"'{normalized}' was not found on NSE or BSE. This tool only "
+            "analyzes Indian-listed equities — check the ticker spelling, "
+            "or the company may not be listed on NSE/BSE."
+        )
+
+    # Every probe raised — could not determine anything, not even a
+    # confirmed "not found". Fail open rather than block the run over
+    # infrastructure trouble this function cannot diagnose or fix.
     return normalized
 
 

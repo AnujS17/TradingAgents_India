@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { RunDetail } from '@/lib/api-client/client';
+import { stopRun, type RunDetail } from '@/lib/api-client/client';
 import { formatDuration, parseApiTimestamp } from '@/lib/format';
 
 export function RunStatusBanner({
@@ -12,6 +12,12 @@ export function RunStatusBanner({
   estimatedSeconds?: number;
 }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // Local-only: "the stop request is in flight or was accepted." The poll
+  // (4s interval, see usePollRun) is what actually confirms the run
+  // stopped -- this just keeps the button from being clickable twice and
+  // gives immediate feedback in the gap before that poll lands.
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   useEffect(() => {
     if (run.status !== 'queued' && run.status !== 'running') return;
@@ -22,6 +28,17 @@ export function RunStatusBanner({
     return () => clearInterval(interval);
   }, [run.status, run.created_at]);
 
+  async function handleStop() {
+    setStopping(true);
+    setStopError(null);
+    try {
+      await stopRun(run.id);
+    } catch {
+      setStopping(false);
+      setStopError('Could not stop this analysis. It may have just finished on its own.');
+    }
+  }
+
   // Dark run-header section (DESIGN.md §1/§9): --void ground, white heading,
   // white/55 body copy — no red for the failed state (green/red are reserved
   // for price direction, never status, per DESIGN.md §1). No pulsing dot
@@ -31,6 +48,18 @@ export function RunStatusBanner({
       <div role="alert" className="w-full sm:w-auto sm:min-w-[300px]">
         <p className="font-tight font-bold text-white text-base">This analysis failed.</p>
         <p className="copy-dark text-white/55 mt-2">{run.error ?? 'No error detail was recorded.'}</p>
+      </div>
+    );
+  }
+
+  // Not an error: a deliberate user action, so it gets the same neutral
+  // treatment as "failed" gets for its own non-error reasons above --
+  // stated plainly, no red.
+  if (run.status === 'cancelled') {
+    return (
+      <div role="status" className="w-full sm:w-auto sm:min-w-[300px]">
+        <p className="font-tight font-bold text-white text-base">Stopped.</p>
+        <p className="copy-dark text-white/55 mt-2">This analysis was stopped before it finished. No verdict was produced.</p>
       </div>
     );
   }
@@ -46,7 +75,17 @@ export function RunStatusBanner({
 
   return (
     <div role="status" aria-live="polite" className="w-full sm:w-auto sm:min-w-[300px]">
-      <p className="font-tight font-bold text-white text-base">{run.status === 'queued' ? 'Queued' : 'Running'}</p>
+      <div className="flex items-start justify-between gap-4">
+        <p className="font-tight font-bold text-white text-base">{run.status === 'queued' ? 'Queued' : 'Running'}</p>
+        <button
+          type="button"
+          onClick={handleStop}
+          disabled={stopping}
+          className="font-tight font-bold text-xs rounded-full border border-white/25 text-white/80 px-3.5 py-1.5 hover:border-white/45 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-default"
+        >
+          {stopping ? 'Stopping…' : 'Stop'}
+        </button>
+      </div>
       <dl className="flex items-baseline gap-6 mt-3">
         <div>
           <dt className="text-xs text-white/55">Elapsed</dt>
@@ -55,6 +94,7 @@ export function RunStatusBanner({
       </dl>
       {estimateText && <p className="copy-dark text-white/55 mt-2">{estimateText}</p>}
       <p className="copy-dark text-white/55 mt-1">This can take 4 to 14 minutes. You can leave this page and come back, the link stays valid.</p>
+      {stopError && <p role="alert" className="copy-dark text-[#FF9D7A] mt-2">{stopError}</p>}
     </div>
   );
 }

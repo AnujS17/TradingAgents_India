@@ -219,6 +219,36 @@ def test_refresh_data_implies_force(client):
 
 
 @pytest.mark.unit
+def test_time_horizon_implies_force(client):
+    """A horizon-scoped request must never silently reuse a run cached for a
+    different (or no) horizon."""
+    client.post("/analyze", json={"ticker": "SIEMENS.NS"})
+    second = client.post(
+        "/analyze", json={"ticker": "SIEMENS.NS", "time_horizon": "3-6 months"}
+    )
+
+    assert second.status_code == 202
+
+
+@pytest.mark.unit
+def test_time_horizon_is_persisted_and_returned(client):
+    run_id = client.post(
+        "/analyze", json={"ticker": "SIEMENS.NS", "time_horizon": "3-6 months"}
+    ).json()["id"]
+
+    assert client.get(f"/runs/{run_id}").json()["requested_time_horizon"] == "3-6 months"
+
+
+@pytest.mark.unit
+def test_blank_time_horizon_is_treated_as_absent(client):
+    response = client.post("/analyze", json={"ticker": "SIEMENS.NS", "time_horizon": "   "})
+
+    assert response.json()["poll_url"]  # queued normally, not rejected
+    run_id = response.json()["id"]
+    assert client.get(f"/runs/{run_id}").json()["requested_time_horizon"] is None
+
+
+@pytest.mark.unit
 def test_history_lists_every_run_newest_first(client):
     client.post("/analyze", json={"ticker": "SIEMENS.NS", "analysis_date": "2026-08-12"})
     latest = client.post(

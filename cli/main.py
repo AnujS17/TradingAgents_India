@@ -30,7 +30,7 @@ from tradingagents.graph.analyst_execution import (
     get_message_stream_channels,
     sync_analyst_tracker_from_chunk,
 )
-from tradingagents.agents.utils.agent_utils import resolve_ticker_symbol
+from tradingagents.agents.utils.agent_utils import TickerNotFoundError, resolve_ticker_symbol
 from tradingagents.dataflows.utils import safe_ticker_component
 from tradingagents.default_config import DEFAULT_CONFIG, get_fast_config
 from cli.models import AnalystType
@@ -1097,9 +1097,13 @@ def run_analysis(checkpoint: bool = False, fast: bool = False, refresh: bool = F
     # safe_ticker_component is applied for the same reason trading_graph.py
     # applies it: the ticker reaches a filesystem path, and this call site was
     # the one place building a results path without that validation.
-    resolved_ticker = resolve_ticker_symbol(
-        selections["ticker"], selections["asset_type"]
-    )
+    try:
+        resolved_ticker = resolve_ticker_symbol(
+            selections["ticker"], selections["asset_type"]
+        )
+    except TickerNotFoundError as exc:
+        console.print(f"\n[red]{exc}[/red]")
+        raise typer.Exit(1)
     ticker_path_component = safe_ticker_component(resolved_ticker)
 
     # Create result directory

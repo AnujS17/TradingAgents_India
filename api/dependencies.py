@@ -40,6 +40,7 @@ class RunStore(Protocol):
         profile: AnalysisProfile,
         refresh_data: bool = False,
         requested_by: str | None = None,
+        time_horizon: str | None = None,
     ) -> RunDetail: ...
 
     async def get(self, run_id: str) -> RunDetail | None: ...
@@ -57,6 +58,8 @@ class RunStore(Protocol):
     async def list(
         self, ticker: str | None, limit: int, offset: int
     ) -> list[RunSummary]: ...
+
+    async def request_stop(self, run_id: str) -> RunDetail | None: ...
 
     async def get_events_since(self, run_id: str, after_seq: int) -> list[RunEventOut]: ...
 
@@ -83,18 +86,18 @@ class InMemoryRunStore:
     def _siblings(
         self, ticker: str, analysis_date: Date, profile: AnalysisProfile
     ) -> list[RunDetail]:
-        """Every run for one question, newest first.
+        """Every completed-or-in-flight run for one question, newest first.
 
-        Failed runs are excluded throughout: one transient vendor outage must
-        not poison a ticker for the rest of the day, nor count toward the run
-        total a user sees.
+        Failed and cancelled runs are excluded throughout: neither produced a
+        real answer, so neither should count toward the run total a user
+        sees or poison a ticker's comparison history for the rest of the day.
         """
         target = self._key(ticker, analysis_date, profile)
         matches = [
             run
             for run in self._runs.values()
             if self._key(run.ticker, run.analysis_date, run.profile) == target
-            and run.status is not RunStatus.FAILED
+            and run.status not in (RunStatus.FAILED, RunStatus.CANCELLED)
         ]
         matches.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return matches
@@ -119,6 +122,7 @@ class InMemoryRunStore:
         profile: AnalysisProfile,
         refresh_data: bool = False,
         requested_by: str | None = None,
+        time_horizon: str | None = None,
     ) -> RunDetail:
         run = RunDetail(
             id=new_run_id(),
@@ -127,6 +131,7 @@ class InMemoryRunStore:
             profile=profile,
             status=RunStatus.QUEUED,
             created_at=datetime.now(timezone.utc),
+            requested_time_horizon=time_horizon,
         )
         self._runs[run.id] = run
         return run
@@ -202,6 +207,18 @@ class InMemoryRunStore:
             RunSummary.model_validate(r, from_attributes=True)
             for r in runs[offset : offset + limit]
         ]
+
+    async def request_stop(self, run_id: str) -> RunDetail | None:
+        # No real worker cooperatively polling a flag for this dev-only
+        # store (no run_events table either -- see get_events_since below),
+        # so both queued and running are cancelled directly rather than
+        # modeling the cooperative-check delay the real SqlRunStore has.
+        run = self._runs.get(run_id)
+        if run is None or run.status not in (RunStatus.QUEUED, RunStatus.RUNNING):
+            return None
+        updated = run.model_copy(update={"status": RunStatus.CANCELLED})
+        self._runs[run_id] = updated
+        return updated
 
     async def get_events_since(self, run_id: str, after_seq: int) -> list[RunEventOut]:
         # This store never captures streamed token events (it has no

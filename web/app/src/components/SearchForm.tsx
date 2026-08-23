@@ -15,6 +15,7 @@ export function SearchForm({ variant = 'hero' }: { variant?: Variant }) {
   const [ticker, setTicker] = useState(() => searchParams.get('ticker') ?? '');
   const [analysisDate, setAnalysisDate] = useState(() => searchParams.get('date') ?? '');
   const [profile, setProfile] = useState<'fast' | 'detailed'>('fast');
+  const [timeHorizon, setTimeHorizon] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -39,6 +40,7 @@ export function SearchForm({ variant = 'hero' }: { variant?: Variant }) {
         ticker,
         profile,
         ...(showDateAndProfile && analysisDate ? { analysis_date: analysisDate } : {}),
+        ...(showDateAndProfile && timeHorizon.trim() ? { time_horizon: timeHorizon.trim() } : {}),
       });
       const query = new URLSearchParams({ cached: cached ? '1' : '0' });
       // Carry the server's own estimate through the navigation — it only
@@ -161,6 +163,17 @@ export function SearchForm({ variant = 'hero' }: { variant?: Variant }) {
             <input type="radio" name="profile" checked={profile === 'detailed'} onChange={() => setProfile('detailed')} /> Detailed (~14 min)
           </label>
         </fieldset>
+      </div>
+      <div className="relative flex-1">
+        <label htmlFor="horizon-hero" className="sr-only">Time horizon (optional)</label>
+        <input
+          id="horizon-hero"
+          value={timeHorizon}
+          onChange={(event) => setTimeHorizon(event.target.value)}
+          placeholder="Holding period, e.g. 3-6 months (optional)"
+          maxLength={64}
+          className="w-full rounded-full border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-[#3DA2F1] focus:bg-white/[0.09] transition-all duration-150"
+        />
       </div>
       <button type="submit" disabled={submitting} className="btn-shimmer rounded-full bg-[#1C6FE6] text-white text-sm font-bold px-7 py-3.5 hover:bg-[#237FFB] transition-colors whitespace-nowrap self-start">
         {submitting ? 'Requesting…' : 'Start researching'}

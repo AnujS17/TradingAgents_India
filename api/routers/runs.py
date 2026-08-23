@@ -90,6 +90,7 @@ async def request_analysis(
         payload.profile,
         refresh_data=payload.refresh_data,
         requested_by=requested_by,
+        time_horizon=payload.time_horizon,
     )
     return RunAccepted(
         id=run.id,
@@ -97,6 +98,28 @@ async def request_analysis(
         poll_url=f"/runs/{run.id}",
         estimated_seconds=_ESTIMATED_SECONDS[payload.profile],
     )
+
+
+@router.post("/runs/{run_id}/stop", response_model=RunDetail, tags=["runs"])
+async def stop_run(run_id: str, store: RunStoreDep) -> RunDetail:
+    """Ask a queued or running analysis to stop.
+
+    Cooperative, not instant, for a running analysis: the worker checks a
+    flag once per streamed chunk (see RunEventWriter.should_stop() and
+    propagate_streaming's loop), typically within about one token's
+    latency but never mid-way through an LLM call already in flight. A
+    still-queued run (no worker has claimed it yet) is cancelled outright.
+
+    404 covers both "no such run" and "this run already finished" — the
+    caller cannot stop what is not running either way, and doesn't need to
+    distinguish the two to know that.
+    """
+    updated = await store.request_stop(run_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=404, detail="Run not found, or it has already finished"
+        )
+    return updated
 
 
 @router.get(
@@ -159,7 +182,7 @@ async def stream_run(run_id: str, store: RunStoreDep, request: Request) -> Strea
             for event in events:
                 seq = event.seq
                 yield f"id: {event.seq}\ndata: {event.model_dump_json()}\n\n"
-            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
                 yield "event: done\ndata: {}\n\n"
                 return
             await asyncio.sleep(0.4)
