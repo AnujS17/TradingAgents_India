@@ -17,6 +17,21 @@ _TRANSIENT_ERROR_MARKERS = (
     "rate limit",
     "too many requests",
     "timeout",
+    # A genuinely dropped local connection (the caller's own network, not the
+    # provider) surfaces as openai.APIConnectionError / anthropic.
+    # APIConnectionError -- verified live against both SDKs: no status_code
+    # attribute at all, message is exactly "Connection error." Neither the
+    # status-code check above nor the markers before this line could ever
+    # match that, so a Wi-Fi blip during an LLM call used to fail the whole
+    # run outright instead of retrying like every other transient failure.
+    "connection error",
+    "connection refused",
+    "connection reset",
+    "network is unreachable",
+    "failed to establish a new connection",
+    "remote end closed connection",
+    "name or service not known",  # Linux/macOS DNS failure
+    "getaddrinfo failed",  # Windows DNS failure
 )
 
 

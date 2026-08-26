@@ -86,6 +86,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Run
+         * @description Continue a failed run instead of starting over from scratch.
+         *
+         *     Queues a NEW run (same ticker/date/profile/time_horizon as the failed
+         *     one) rather than mutating it in place, so the failed row stays in the
+         *     run history as an honest record of what happened. The new run is marked
+         *     internally so the engine may pick up whatever checkpoint the failed
+         *     attempt left behind (see TradingAgentsGraph.propagate_streaming's
+         *     ``resume`` parameter) -- if nothing was actually checkpointed (the run
+         *     failed before any stage finished, for example), it degrades gracefully
+         *     to a normal fresh run instead of erroring.
+         *
+         *     404 covers both "no such run" and "that run isn't in a failed state" --
+         *     a caller cannot resume what didn't fail either way, and doesn't need to
+         *     distinguish the two to know that. Budget-checked the same as a normal
+         *     /analyze call: continuing a run still spends real LLM calls for
+         *     whatever's left.
+         */
+        post: operations["resume_run_runs__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{ticker}/{analysis_date}/history": {
         parameters: {
             query?: never;
@@ -493,6 +528,8 @@ export interface components {
             /** Time Horizon */
             time_horizon?: string | null;
             levels?: components["schemas"]["TradeLevels"];
+            /** Current Price */
+            current_price?: number | null;
         };
     };
     responses: never;
@@ -574,6 +611,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_run_runs__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunAccepted"];
                 };
             };
             /** @description Validation Error */

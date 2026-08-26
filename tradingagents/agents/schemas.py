@@ -24,6 +24,22 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, create_model, model_validator
 
+# Appended to free-text decision fields (Trader.reasoning, PortfolioDecision.
+# executive_summary/investment_thesis) after a recurring, observed failure:
+# a reasoning model narrating a revision to its own draft mid-field, e.g.
+# "locking in gains from the ~~100% one-year run while retaining two-thirds
+# exposure~~ to the genuine monopoly and regulatory tailwinds" -- GFM markdown
+# renders that literally as struck-through text in the UI, and even read as
+# plain text the sentence is broken (the surviving clause doesn't parse
+# without the one it was "replacing"). This is not the model choosing to
+# format an edit for the reader; it is internal self-correction leaking into
+# a field that is supposed to hold only the final answer.
+_FINAL_ANSWER_ONLY = (
+    " Write only your final answer, in plain prose. Do not narrate a "
+    "revision to your own draft, and do not use markdown strikethrough "
+    "(~~text~~) or any similar crossed-out/redlined formatting."
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared rating types
@@ -122,7 +138,7 @@ class TraderProposal(BaseModel):
     reasoning: str = Field(
         description=(
             "The case for this action, anchored in the analysts' reports and "
-            "the research plan. Two to four sentences."
+            "the research plan. Two to four sentences." + _FINAL_ANSWER_ONLY
         ),
     )
     # These two descriptions ARE the model's only instruction for these
@@ -137,6 +153,15 @@ class TraderProposal(BaseModel):
     # back-filled a number from the prose. Saying "Optional" was not enough;
     # it has to say when None is the RIGHT answer.
     #
+    # 2026-08-26: the original wording also let the model omit these for a
+    # Buy/Sell whenever it "wasn't proposing a specific level" -- meant for
+    # genuinely level-less Holds, but a model given a conditional/staged plan
+    # (e.g. tranche entries across multiple reference prices) took that as
+    # license to leave a real trade's levels blank too, which reads as a
+    # missing number on the card rather than a decision. Tightened so the
+    # loophole applies to Hold only; a Buy or Sell now has to commit to one
+    # concrete level even out of a staged plan.
+    #
     # THE BOOK IS LONG-ONLY. There is no shorting anywhere in this codebase,
     # and Sell means "reduce or exit a long", not "open a short" — see the
     # Underweight/Sell wording on PortfolioRating and every observed run
@@ -150,12 +175,16 @@ class TraderProposal(BaseModel):
         description=(
             "Entry or execution price target in the instrument's quote "
             "currency — the level at which the action is meant to happen "
-            "(the level to buy at, or the level to trim into). Omit it "
-            "(null) when the action is Hold with nothing being executed, or "
-            "when you are not proposing a specific level: a Hold that says "
-            "'wait for a pullback' should leave this null rather than quote "
-            "the level you are waiting for. Never invent a number to fill "
-            "the field."
+            "(the level to buy at, or the level to trim into). REQUIRED "
+            "whenever action is Buy or Sell: ground it in a level the "
+            "analysts actually discussed (a quoted price, a moving average, "
+            "a support/resistance level). If the plan is staged or "
+            "conditional, state the level that starts it — e.g. the first "
+            "tranche — rather than leaving this null; a range or 'wait for a "
+            "pullback' is not a reason to omit it once you have decided to "
+            "act. Omit it (null) ONLY when the action is Hold with nothing "
+            "being executed. Never invent a number with no basis in the "
+            "analysts' reports."
         ),
     )
     stop_loss: Optional[float] = Field(
@@ -167,9 +196,11 @@ class TraderProposal(BaseModel):
             "every action — including Sell, where it protects the portion of "
             "the position you are keeping, not the portion you are trimming. "
             "It must never equal entry_price: a stop at the entry is not a "
-            "stop. Omit it (null) whenever you omit entry_price, when the "
-            "action is a full exit, or when no protective level follows from "
-            "the analysis."
+            "stop. REQUIRED whenever action is Buy, or Sell with any part of "
+            "the position retained. Omit it (null) only when action is Hold, "
+            "or when action is Sell and the entire position is being closed "
+            "— there is nothing left to protect once the position is fully "
+            "exited."
         ),
     )
     position_sizing: Optional[str] = Field(
@@ -253,7 +284,7 @@ class PortfolioDecision(BaseModel):
     executive_summary: str = Field(
         description=(
             "A concise action plan covering entry strategy, position sizing, "
-            "key risk levels, and time horizon. Two to four sentences."
+            "key risk levels, and time horizon. Two to four sentences." + _FINAL_ANSWER_ONLY
         ),
     )
     investment_thesis: str = Field(
@@ -261,11 +292,20 @@ class PortfolioDecision(BaseModel):
             "Detailed reasoning anchored in specific evidence from the analysts' "
             "debate. If prior lessons are referenced in the prompt context, "
             "incorporate them; otherwise rely solely on the current analysis."
+            + _FINAL_ANSWER_ONLY
         ),
     )
     price_target: Optional[float] = Field(
         default=None,
-        description="Optional target price in the instrument's quote currency.",
+        description=(
+            "The exit / take-profit level in the instrument's quote "
+            "currency — the price at which this position would be closed "
+            "for a win. REQUIRED whenever rating is not Hold: give one "
+            "specific level grounded in the analysts' reports (a technical "
+            "level, a valuation-based target, a prior high). Omit it (null) "
+            "ONLY when rating is Hold, where there is no position being "
+            "opened or added to."
+        ),
     )
     time_horizon: Optional[str] = Field(
         default=None,
@@ -427,17 +467,20 @@ CONCISE_RESEARCH_PLAN_OVERRIDES = {
 CONCISE_TRADER_OVERRIDES = {
     "reasoning": (
         "50 words MAXIMUM. The evidence that decided it. No restating reports."
+        + _FINAL_ANSWER_ONLY
     ),
 }
 
 CONCISE_PORTFOLIO_OVERRIDES = {
     "executive_summary": (
         "50 words MAXIMUM. The action, the level, the risk bound. Nothing else."
+        + _FINAL_ANSWER_ONLY
     ),
     "investment_thesis": (
         "120 words MAXIMUM. The decisive evidence and the main counter-argument "
         "you are accepting the risk of. Do not re-summarise every analyst; "
         "cite only what changed the decision."
+        + _FINAL_ANSWER_ONLY
     ),
 }
 

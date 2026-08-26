@@ -85,6 +85,24 @@ def test_claims_are_oldest_first(store):
 
 
 @pytest.mark.unit
+def test_claim_next_run_finds_the_next_row_after_losing_a_race(store):
+    """Two callers racing for the SAME oldest queued row: the loser must not
+    come back None while a second row is still queued -- it should retry and
+    claim that one instead. Without this, a worker lane that loses a single
+    race goes dormant for a full poll interval even though work remains
+    (the bug that made concurrent lanes process runs one at a time)."""
+
+    async def scenario():
+        await store.create("AAA.NS", DAY, AnalysisProfile.FAST)
+        await store.create("BBB.NS", DAY, AnalysisProfile.FAST)
+        return await asyncio.gather(store.claim_next_run(), store.claim_next_run())
+
+    first, second = _run(scenario())
+    claimed_tickers = sorted(r.ticker for r in (first, second) if r is not None)
+    assert claimed_tickers == ["AAA.NS", "BBB.NS"]
+
+
+@pytest.mark.unit
 def test_worker_executes_a_run_and_stores_the_result(store, monkeypatch):
     """The whole point: a queued run comes back completed, with reports."""
     import api.service
@@ -234,7 +252,7 @@ def test_requested_time_horizon_reaches_the_worker(store, monkeypatch):
     monkeypatch.setattr(
         api.service,
         "run_analysis",
-        lambda ticker, day, profile, refresh, on_token, should_stop, horizon=None: (
+        lambda ticker, day, profile, refresh, on_token, should_stop, horizon=None, resume=False: (
             seen.update(horizon=horizon),
             (Verdict(), Reports()),
         )[1],
@@ -249,6 +267,87 @@ def test_requested_time_horizon_reaches_the_worker(store, monkeypatch):
 
     _run(scenario())
     assert seen["horizon"] == "3-6 months"
+
+
+@pytest.mark.unit
+def test_worker_loop_processes_multiple_runs_concurrently(store, monkeypatch):
+    """With concurrency=2, two queued runs overlap in time rather than the
+    second waiting for the first to finish completely -- the whole point of
+    adding lanes instead of leaving worker_loop strictly serial."""
+    import threading
+    import time
+
+    import api.service
+
+    active = {"count": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def slow_run_analysis(ticker, day, profile, refresh, *a, **k):
+        with lock:
+            active["count"] += 1
+            active["peak"] = max(active["peak"], active["count"])
+        time.sleep(0.2)
+        with lock:
+            active["count"] -= 1
+        return Verdict(rating="Hold"), Reports(final_decision="ok")
+
+    monkeypatch.setattr(api.service, "run_analysis", slow_run_analysis)
+
+    async def scenario():
+        from api.worker import worker_loop
+
+        first = await store.create("AAA.NS", DAY, AnalysisProfile.FAST)
+        second = await store.create("BBB.NS", DAY, AnalysisProfile.FAST)
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker_loop(stop, store=store, concurrency=2))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            a, b = await store.get(first.id), await store.get(second.id)
+            if a.status is RunStatus.COMPLETED and b.status is RunStatus.COMPLETED:
+                break
+        stop.set()
+        await task
+        return a, b
+
+    a, b = _run(scenario())
+    assert a.status is RunStatus.COMPLETED
+    assert b.status is RunStatus.COMPLETED
+    assert active["peak"] == 2
+
+
+@pytest.mark.unit
+def test_worker_lanes_never_claim_the_same_row(store, monkeypatch):
+    """Multiple lanes racing via asyncio.gather -- not sequential awaits --
+    must still only ever claim a queued row once. The sequential
+    test_a_claimed_run_is_not_handed_out_twice above can't catch a genuine
+    race between concurrently-scheduled coroutines the way this can."""
+    import api.service
+
+    calls = []
+
+    def record_run_analysis(ticker, day, profile, refresh, *a, **k):
+        calls.append(ticker)
+        return Verdict(rating="Hold"), Reports(final_decision="ok")
+
+    monkeypatch.setattr(api.service, "run_analysis", record_run_analysis)
+
+    async def scenario():
+        from api.worker import worker_loop
+
+        created = await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker_loop(stop, store=store, concurrency=3))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            current = await store.get(created.id)
+            if current.status is RunStatus.COMPLETED:
+                break
+        stop.set()
+        await task
+        return calls
+
+    result = _run(scenario())
+    assert result == ["SIEMENS.NS"]
 
 
 @pytest.mark.unit

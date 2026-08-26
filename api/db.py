@@ -81,6 +81,14 @@ class Run(Base):
     # Manager's prompt. NULL means none was requested.
     requested_time_horizon: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Set when this row was created via POST /runs/{id}/resume rather than
+    # POST /analyze. Read by the worker to tell the engine it may pick up an
+    # existing checkpoint for this (ticker, analysis_date) instead of
+    # clearing it first -- see TradingAgentsGraph.propagate_streaming's
+    # ``resume`` parameter. NULL (pre-existing rows) is treated as falsy
+    # everywhere it's read, same convention as stop_requested.
+    resume: Mapped[bool] = mapped_column(Boolean, default=False)
+
     __table_args__ = (
         # The cache lookup: "has this exact question been answered?" Sorted by
         # created_at so "newest run for this question" is an index scan.
@@ -176,6 +184,8 @@ async def create_tables() -> None:
             await conn.execute(text("ALTER TABLE runs ADD COLUMN stop_requested BOOLEAN DEFAULT 0"))
         if "requested_time_horizon" not in existing_columns:
             await conn.execute(text("ALTER TABLE runs ADD COLUMN requested_time_horizon VARCHAR(64)"))
+        if "resume" not in existing_columns:
+            await conn.execute(text("ALTER TABLE runs ADD COLUMN resume BOOLEAN DEFAULT 0"))
 
 
 def utcnow() -> datetime:

@@ -141,6 +141,11 @@ class Verdict(BaseModel):
     price_target: float | None = None
     time_horizon: str | None = None
     levels: TradeLevels = Field(default_factory=TradeLevels)
+    # The real last-traded close on analysis_date, from the same OHLCV data
+    # the market analyst used — not model-authored, so it can't be wrong the
+    # way a restated number could be. None if the fetch fails; that must
+    # never fail the run itself (see _extract_current_price).
+    current_price: float | None = None
 
 
 class Reports(BaseModel):

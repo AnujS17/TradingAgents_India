@@ -11,6 +11,7 @@ renderer change fails here immediately instead of quietly producing empty
 verdicts in production.
 """
 
+import pandas as pd
 import pytest
 
 from api.service import _extract_verdict
@@ -24,11 +25,16 @@ from tradingagents.agents.schemas import (
 )
 
 
-def _state(proposal=None, decision=None) -> dict:
-    return {
+def _state(proposal=None, decision=None, ticker=None, trade_date=None) -> dict:
+    state = {
         "trader_investment_plan": render_trader_proposal(proposal) if proposal else "",
         "final_trade_decision": render_pm_decision(decision) if decision else "",
     }
+    if ticker is not None:
+        state["company_of_interest"] = ticker
+    if trade_date is not None:
+        state["trade_date"] = trade_date
+    return state
 
 
 @pytest.mark.unit
@@ -107,6 +113,57 @@ def test_empty_state_yields_an_empty_verdict_rather_than_raising():
 
     assert verdict.rating is None
     assert verdict.levels.action is None
+
+
+@pytest.mark.unit
+def test_current_price_is_the_last_close_for_the_resolved_ticker(monkeypatch):
+    """current_price comes from real OHLCV data keyed on company_of_interest
+    (the resolved symbol, e.g. TORNTPOWER.NS) and trade_date -- not the raw
+    ticker a caller might have passed to run_analysis, and not anything the
+    model wrote."""
+    import tradingagents.dataflows.stockstats_utils as stockstats_utils
+
+    seen = {}
+
+    def fake_load_ohlcv(symbol, curr_date):
+        seen["symbol"] = symbol
+        seen["curr_date"] = curr_date
+        return pd.DataFrame({"Close": [100.0, 105.5]})
+
+    monkeypatch.setattr(stockstats_utils, "load_ohlcv", fake_load_ohlcv)
+
+    verdict = _extract_verdict(_state(ticker="TORNTPOWER.NS", trade_date="2026-08-26"))
+
+    assert verdict.current_price == 105.5
+    assert seen == {"symbol": "TORNTPOWER.NS", "curr_date": "2026-08-26"}
+
+
+@pytest.mark.unit
+def test_current_price_is_none_when_state_lacks_ticker_or_date():
+    """Never called on a genuinely empty state -- confirms _extract_current_price
+    short-circuits rather than calling load_ohlcv with None."""
+    verdict = _extract_verdict(_state())
+
+    assert verdict.current_price is None
+
+
+@pytest.mark.unit
+def test_current_price_failure_does_not_break_the_rest_of_the_verdict(monkeypatch):
+    """A vendor outage while fetching current_price must not take down a run
+    that otherwise completed -- same never-raise contract as the rest of
+    _extract_verdict."""
+    import tradingagents.dataflows.stockstats_utils as stockstats_utils
+
+    def boom(symbol, curr_date):
+        raise RuntimeError("vendor exploded")
+
+    monkeypatch.setattr(stockstats_utils, "load_ohlcv", boom)
+
+    proposal = TraderProposal(action=TraderAction.BUY, reasoning="Momentum confirmed.", entry_price=100.0)
+    verdict = _extract_verdict(_state(proposal=proposal, ticker="X.NS", trade_date="2026-08-26"))
+
+    assert verdict.current_price is None
+    assert verdict.levels.entry_price == 100.0
 
 
 @pytest.mark.unit

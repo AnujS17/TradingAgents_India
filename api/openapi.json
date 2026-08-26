@@ -113,6 +113,49 @@
         }
       }
     },
+    "/runs/{run_id}/resume": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Resume Run",
+        "description": "Continue a failed run instead of starting over from scratch.\n\nQueues a NEW run (same ticker/date/profile/time_horizon as the failed\none) rather than mutating it in place, so the failed row stays in the\nrun history as an honest record of what happened. The new run is marked\ninternally so the engine may pick up whatever checkpoint the failed\nattempt left behind (see TradingAgentsGraph.propagate_streaming's\n``resume`` parameter) -- if nothing was actually checkpointed (the run\nfailed before any stage finished, for example), it degrades gracefully\nto a normal fresh run instead of erroring.\n\n404 covers both \"no such run\" and \"that run isn't in a failed state\" --\na caller cannot resume what didn't fail either way, and doesn't need to\ndistinguish the two to know that. Budget-checked the same as a normal\n/analyze call: continuing a run still spends real LLM calls for\nwhatever's left.",
+        "operationId": "resume_run_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/runs/{ticker}/{analysis_date}/history": {
       "get": {
         "tags": [
@@ -1099,6 +1142,17 @@
           },
           "levels": {
             "$ref": "#/components/schemas/TradeLevels"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
           }
         },
         "type": "object",

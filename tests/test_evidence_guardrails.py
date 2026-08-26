@@ -98,7 +98,7 @@ def test_trader_omits_unsupported_indicator_derived_levels():
     # and these descriptions are built from adjacent string literals, so a
     # phrase spanning a line break would never match. The runtime description
     # text is asserted in test_concise_schemas.py instead.
-    assert "Never invent a number to fill" in schema_text
+    assert "Never invent a number with no basis in the" in schema_text
     assert "never equal entry_price" in schema_text
     assert "strictly BELOW entry_price" in schema_text
     assert "long-only" in schema_text

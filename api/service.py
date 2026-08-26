@@ -32,9 +32,13 @@ def build_config(profile: AnalysisProfile) -> dict:
     """
     from tradingagents.default_config import DEFAULT_CONFIG, get_fast_config
 
-    if profile is AnalysisProfile.FAST:
-        return get_fast_config()
-    return DEFAULT_CONFIG.copy()
+    config = get_fast_config() if profile is AnalysisProfile.FAST else DEFAULT_CONFIG.copy()
+    # Every API-driven run gets a checkpoint, not just ones that end up
+    # needing one -- run_analysis()'s resume=False default clears it before
+    # each normal run, so this only ever matters when a run actually fails
+    # partway through and POST /runs/{id}/resume is used afterward.
+    config["checkpoint_enabled"] = True
+    return config
 
 
 def config_fingerprint(config: dict) -> str:
@@ -91,6 +95,38 @@ def _float_field(rendered: str, label: str) -> float | None:
         return None
 
 
+def _extract_current_price(state: dict) -> float | None:
+    """Real last-traded close for the resolved ticker on the analysis date.
+
+    Deliberately NOT read from any model output -- it's a fact, not a
+    decision, and the OHLCV data behind it already exists on disk by the
+    time this runs: the market analyst fetched (and cached) it during the
+    same graph run for this exact (ticker, date), so this call is a cache
+    hit in the common case, not a second network round-trip. Uses
+    ``company_of_interest`` (set once by ``resolve_ticker_symbol`` in
+    ``Propagator.create_initial_state``), not the raw ticker the caller
+    passed in -- the raw ticker may be missing its exchange suffix.
+
+    Never raises: a failure here (vendor outage, an asset type with no
+    OHLCV concept) must not take down a run that otherwise completed. The
+    card just shows "Not set" for current price, same as any other blank
+    field.
+    """
+    from tradingagents.dataflows.stockstats_utils import load_ohlcv
+
+    ticker = state.get("company_of_interest")
+    trade_date = state.get("trade_date")
+    if not ticker or not trade_date:
+        return None
+    try:
+        data = load_ohlcv(ticker, trade_date)
+        if data.empty:
+            return None
+        return float(data["Close"].iloc[-1])
+    except Exception:  # noqa: BLE001 - enrichment only, never fail the run
+        return None
+
+
 def _extract_verdict(state: dict) -> Verdict:
     """Recover the structured decision from the rendered agent reports.
 
@@ -126,6 +162,7 @@ def _extract_verdict(state: dict) -> Verdict:
             stop_loss=_float_field(trader, "Stop Loss"),
             position_sizing=_field(trader, "Position Sizing"),
         ),
+        current_price=_extract_current_price(state),
     )
 
 
@@ -154,6 +191,7 @@ def run_analysis(
     on_token=None,
     should_stop=None,
     time_horizon: str | None = None,
+    resume: bool = False,
 ) -> tuple[Verdict, Reports]:
     """Execute one full analysis. Blocking, minutes long, worker-only.
 
@@ -181,6 +219,14 @@ def run_analysis(
     ``time_horizon``, when given, is forwarded as ``investment_horizon`` to
     the engine, which threads it into state for the Portfolio Manager only —
     it does not change what data the analysts fetch or read.
+
+    ``resume``, default False: forwarded to the engine's own ``resume``
+    parameter (see ``TradingAgentsGraph.propagate_streaming``). False (every
+    normal call, including a plain retry) clears any leftover checkpoint for
+    this (ticker, date) before starting, so a fresh run never silently
+    inherits state from an unrelated earlier attempt. Only
+    ``POST /runs/{id}/resume`` sets this True, and only for a run that was
+    itself ``failed`` — see ``SqlRunStore.create_resume``.
     """
     from tradingagents.graph.trading_graph import StreamCancelled, TradingAgentsGraph
 
@@ -200,12 +246,13 @@ def run_analysis(
                 on_token=on_token,
                 should_stop=should_stop,
                 investment_horizon=time_horizon,
+                resume=resume,
             )
         except StreamCancelled as exc:
             raise RunCancelled(str(exc)) from exc
     else:
         final_state, _signal = graph.propagate(
-            ticker, str(analysis_date), investment_horizon=time_horizon
+            ticker, str(analysis_date), investment_horizon=time_horizon, resume=resume
         )
 
     return _extract_verdict(final_state), _extract_reports(final_state)

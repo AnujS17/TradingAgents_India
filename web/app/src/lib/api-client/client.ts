@@ -114,6 +114,24 @@ export async function stopRun(id: string): Promise<RunDetail> {
   return (await res.json()) as RunDetail;
 }
 
+/** Continue a failed run instead of restarting from scratch -- queues a NEW
+ * run (poll it the same way as one from analyzeRun) rather than mutating the
+ * failed one in place. 404 covers both "no such run" and "that run didn't
+ * fail"; either way there's nothing to resume. */
+export async function resumeRun(id: string): Promise<RunAccepted> {
+  const res = await fetch(`${API_BASE_URL}/runs/${id}/resume`, { method: 'POST' });
+  if (res.status === 404) {
+    throw new ApiError(404, 'Run not found, or it did not fail');
+  }
+  if (res.status === 429) {
+    const body = await res.json().catch(() => ({ detail: 'Rate limited.' }));
+    const retryAfterSeconds = Number(res.headers.get('Retry-After') ?? '3600');
+    throw new RateLimitError(body.detail ?? 'Rate limited.', retryAfterSeconds);
+  }
+  if (!res.ok) throw new ApiError(res.status, `Failed to resume run ${id}`);
+  return (await res.json()) as RunAccepted;
+}
+
 export async function listRuns(
   params: { ticker?: string; limit?: number; offset?: number } = {},
 ): Promise<RunSummary[]> {

@@ -21,6 +21,7 @@ import traceback
 
 from api.db import Run, create_tables
 from api.schemas import AnalysisProfile
+from api.settings import get_settings
 from api.store import SqlRunStore
 
 logger = logging.getLogger("api.worker")
@@ -72,6 +73,7 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
             writer.on_token,
             writer.should_stop,
             row.requested_time_horizon,
+            resume=bool(row.resume),
         )
     except RunCancelled:
         logger.info("run %s stopped by request", row.id)
@@ -92,8 +94,14 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
     logger.info("completed %s (%s)", row.id, verdict.rating or "no rating")
 
 
-async def worker_loop(stop: asyncio.Event, store: SqlRunStore | None = None) -> None:
-    store = store or SqlRunStore()
+async def worker_lane(lane_id: int, stop: asyncio.Event, store: SqlRunStore) -> None:
+    """One cashier. Runs until told to stop, always claiming and finishing
+    one row before claiming the next -- concurrency comes from running
+    several lanes side by side (see worker_loop), not from anything in here.
+
+    Safe to run N of these against the same store: claim_next_run's UPDATE is
+    conditional on the row still being queued, so two lanes racing for the
+    same row never both win."""
     while not stop.is_set():
         row = await store.claim_next_run()
         if row is None:
@@ -104,7 +112,21 @@ async def worker_loop(stop: asyncio.Event, store: SqlRunStore | None = None) -> 
             except asyncio.TimeoutError:
                 pass
             continue
+        logger.debug("lane %d claimed %s", lane_id, row.id)
         await execute_run(store, row)
+
+
+async def worker_loop(
+    stop: asyncio.Event,
+    store: SqlRunStore | None = None,
+    concurrency: int | None = None,
+) -> None:
+    store = store or SqlRunStore()
+    if concurrency is None:
+        concurrency = get_settings().worker_concurrency
+    await asyncio.gather(
+        *(worker_lane(lane_id, stop, store) for lane_id in range(concurrency))
+    )
 
 
 async def main() -> None:
@@ -123,9 +145,12 @@ async def main() -> None:
             # below is the fallback path there.
             pass
 
-    logger.info("worker started; polling every %.0fs", POLL_INTERVAL_SECONDS)
+    concurrency = get_settings().worker_concurrency
+    logger.info(
+        "worker started; %d lane(s), polling every %.0fs", concurrency, POLL_INTERVAL_SECONDS
+    )
     try:
-        await worker_loop(stop)
+        await worker_loop(stop, concurrency=concurrency)
     finally:
         logger.info("worker stopped")
 

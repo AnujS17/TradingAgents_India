@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # occupy a worker before being reaped.
     run_timeout_seconds: int = 1800
 
+    # How many runs api.worker executes at once, in one process. claim_next_run's
+    # conditional UPDATE already guarantees two lanes can't claim the same row, so
+    # this is the only knob needed for concurrency -- default 1 keeps today's
+    # strictly-serial behavior until someone opts in.
+    worker_concurrency: int = 1
+
     allowed_origins: list[str] = ["http://localhost:3000"]
     allowed_methods: list[str] = ["GET", "POST", "OPTIONS"]
     allowed_headers: list[str] = ["Authorization", "Content-Type"]

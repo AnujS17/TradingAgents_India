@@ -25,6 +25,43 @@ def test_capacity_error_is_transient():
 
 
 @pytest.mark.unit
+def test_a_real_dropped_connection_is_transient():
+    """openai.APIConnectionError and anthropic.APIConnectionError -- what
+    every provider client in this codebase actually raises when the local
+    network genuinely drops mid-call -- carry no status_code at all and say
+    only "Connection error." (verified live against both SDKs). Neither the
+    status-code check nor the original marker list could see these, so a
+    Wi-Fi blip during an LLM call used to fail the whole run outright
+    instead of retrying like every other transient failure does."""
+    exc = ProviderError("Connection error.")  # status_code=None, the real shape
+
+    assert is_transient_llm_error(exc)
+
+
+@pytest.mark.unit
+def test_dns_failure_is_transient():
+    exc = ProviderError("[Errno 11001] getaddrinfo failed")  # Windows DNS failure
+
+    assert is_transient_llm_error(exc)
+
+
+@pytest.mark.unit
+def test_connection_refused_is_transient():
+    exc = ProviderError("Connection refused")
+
+    assert is_transient_llm_error(exc)
+
+
+@pytest.mark.unit
+def test_a_genuinely_unrelated_error_is_still_not_transient():
+    """The widened marker list must not swallow real bugs -- a KeyError from
+    a malformed response body has nothing to do with connectivity."""
+    exc = ProviderError("KeyError: 'choices'")
+
+    assert not is_transient_llm_error(exc)
+
+
+@pytest.mark.unit
 def test_invoke_with_transient_retries_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr("tradingagents.llm_clients.base_client.time.sleep", lambda _: None)
     attempts = {"count": 0}

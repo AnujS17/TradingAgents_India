@@ -122,6 +122,49 @@ async def stop_run(run_id: str, store: RunStoreDep) -> RunDetail:
     return updated
 
 
+@router.post(
+    "/runs/{run_id}/resume",
+    response_model=RunAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["runs"],
+)
+async def resume_run(
+    run_id: str, store: RunStoreDep, request: Request
+) -> RunAccepted:
+    """Continue a failed run instead of starting over from scratch.
+
+    Queues a NEW run (same ticker/date/profile/time_horizon as the failed
+    one) rather than mutating it in place, so the failed row stays in the
+    run history as an honest record of what happened. The new run is marked
+    internally so the engine may pick up whatever checkpoint the failed
+    attempt left behind (see TradingAgentsGraph.propagate_streaming's
+    ``resume`` parameter) -- if nothing was actually checkpointed (the run
+    failed before any stage finished, for example), it degrades gracefully
+    to a normal fresh run instead of erroring.
+
+    404 covers both "no such run" and "that run isn't in a failed state" --
+    a caller cannot resume what didn't fail either way, and doesn't need to
+    distinguish the two to know that. Budget-checked the same as a normal
+    /analyze call: continuing a run still spends real LLM calls for
+    whatever's left.
+    """
+    requested_by = client_identity(request)
+    await enforce_budget(store, requested_by)
+
+    new_run = await store.create_resume(run_id, requested_by=requested_by)
+    if new_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Run not found, or it did not fail (only a failed run can be resumed)",
+        )
+    return RunAccepted(
+        id=new_run.id,
+        status=new_run.status,
+        poll_url=f"/runs/{new_run.id}",
+        estimated_seconds=_ESTIMATED_SECONDS[new_run.profile],
+    )
+
+
 @router.get(
     "/runs/{ticker}/{analysis_date}/history",
     response_model=RunHistory,

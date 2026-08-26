@@ -255,6 +255,15 @@ class TradingAgentsGraph:
         if seed is not None and provider not in ("anthropic", "google"):
             kwargs["seed"] = int(seed)
 
+        # Every provider client (openai_client, anthropic_client,
+        # google_client, azure_client) forwards `timeout` straight through
+        # to its underlying SDK -- see each client's _PASSTHROUGH_KWARGS.
+        # Bounds a single call's worst case; see default_config.py's
+        # llm_timeout_seconds comment for the incident that motivated this.
+        timeout = self.config.get("llm_timeout_seconds")
+        if timeout is not None:
+            kwargs["timeout"] = float(timeout)
+
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
             if thinking_level:
@@ -452,7 +461,12 @@ class TradingAgentsGraph:
             self.memory_log.batch_update_with_outcomes(updates)
 
     def propagate(
-        self, company_name, trade_date, asset_type: str = "stock", investment_horizon: str | None = None
+        self,
+        company_name,
+        trade_date,
+        asset_type: str = "stock",
+        investment_horizon: str | None = None,
+        resume: bool = False,
     ):
         """Run the trading agents graph for a company on a specific date.
 
@@ -467,6 +481,15 @@ class TradingAgentsGraph:
         guidance for the Portfolio Manager only (see
         ``Propagator.create_initial_state``) — it does not affect what any
         analyst fetches or reads.
+
+        ``resume``, default False: whether this call may pick up an existing
+        checkpoint for (company_name, trade_date). A checkpoint is keyed on
+        that pair alone, not on a specific caller or run id, so every call
+        that does NOT explicitly ask to resume clears any leftover checkpoint
+        before starting — otherwise a deliberate fresh run (e.g. re-running
+        the same ticker+date to compare two models) would silently inherit a
+        stale in-progress state from an unrelated earlier attempt instead of
+        genuinely starting over.
         """
         # Resolve the ticker once, here, before anything keys off it. Every
         # identity in this method is derived from company_name: self.ticker
@@ -498,6 +521,9 @@ class TradingAgentsGraph:
 
         # Recompile with a checkpointer if the user opted in.
         if self.config.get("checkpoint_enabled"):
+            if not resume:
+                clear_checkpoint(self.config["data_cache_dir"], company_name, str(trade_date))
+
             self._checkpointer_ctx = get_checkpointer(
                 self.config["data_cache_dir"], company_name
             )
@@ -532,9 +558,15 @@ class TradingAgentsGraph:
         on_token=None,
         should_stop=None,
         investment_horizon: str | None = None,
+        resume: bool = False,
     ):
         """Like propagate(), but also streams token-level chunks through
         on_token(node_name: str, delta: str) as the graph executes.
+
+        ``resume``: see propagate()'s docstring -- same contract, same
+        default. False (every normal call) clears any leftover checkpoint
+        for (company_name, trade_date) before starting; True lets an
+        existing checkpoint from a prior crashed attempt be picked up.
 
         on_token is optional; passing None runs identically to propagate()
         with no callback overhead beyond the extra stream_mode. on_token is
@@ -574,6 +606,20 @@ class TradingAgentsGraph:
         set_snapshot_date(trade_date)
         self._resolve_pending_entries(company_name)
 
+        # Recompile with a checkpointer if opted in -- same mechanism
+        # propagate()/_run_graph() uses, previously never reached from here,
+        # which is why a worker crash mid-stream (the only path api.worker
+        # actually calls) never had anything to resume from.
+        if self.config.get("checkpoint_enabled"):
+            if not resume:
+                clear_checkpoint(self.config["data_cache_dir"], company_name, str(trade_date))
+
+            self._checkpointer_ctx = get_checkpointer(
+                self.config["data_cache_dir"], company_name
+            )
+            saver = self._checkpointer_ctx.__enter__()
+            self.graph = self.workflow.compile(checkpointer=saver)
+
         past_context = self.memory_log.get_past_context(company_name)
         init_agent_state = self.propagator.create_initial_state(
             company_name,
@@ -585,23 +631,60 @@ class TradingAgentsGraph:
         args = self.propagator.get_graph_args()
         args.pop("stream_mode", None)  # this method controls stream_mode itself
 
+        # graph_input is None on a genuine resume, NOT init_agent_state --
+        # see the identical comment and empirical verification in
+        # _run_graph(). Passing the full initial state again would make
+        # LangGraph re-apply it as a fresh update over the checkpoint,
+        # re-running every already-completed node instead of skipping them.
+        graph_input = init_agent_state
+        resuming = False
+        if self.config.get("checkpoint_enabled"):
+            tid = thread_id(company_name, str(trade_date))
+            args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = tid
+            resuming = (
+                checkpoint_step(self.config["data_cache_dir"], company_name, str(trade_date))
+                is not None
+            )
+            if resuming:
+                graph_input = None
+            logger.info(
+                "%s (streaming) for %s on %s",
+                "Resuming" if resuming else "Starting fresh",
+                company_name,
+                trade_date,
+            )
+
         final_state: dict = {}
-        for stream_mode, chunk in self.graph.stream(
-            init_agent_state, stream_mode=["values", "messages"], **args
-        ):
-            if should_stop is not None and should_stop():
-                raise StreamCancelled(f"{company_name} analysis stopped by request")
-            if stream_mode == "values":
-                final_state.update(chunk)
-            elif stream_mode == "messages" and on_token is not None:
-                message_chunk, metadata = chunk
-                node_name = metadata.get("langgraph_node", "unknown")
-                delta = getattr(message_chunk, "content", "") or ""
-                if delta:
-                    try:
-                        on_token(node_name, delta)
-                    except Exception as exc:  # noqa: BLE001 - never fail the run over a live-view glitch
-                        logger.warning("propagate_streaming: on_token failed (%s)", exc)
+        try:
+            for stream_mode, chunk in self.graph.stream(
+                graph_input, stream_mode=["values", "messages"], **args
+            ):
+                if should_stop is not None and should_stop():
+                    raise StreamCancelled(f"{company_name} analysis stopped by request")
+                if stream_mode == "values":
+                    final_state.update(chunk)
+                elif stream_mode == "messages" and on_token is not None:
+                    message_chunk, metadata = chunk
+                    node_name = metadata.get("langgraph_node", "unknown")
+                    delta = getattr(message_chunk, "content", "") or ""
+                    if delta:
+                        try:
+                            on_token(node_name, delta)
+                        except Exception as exc:  # noqa: BLE001 - never fail the run over a live-view glitch
+                            logger.warning("propagate_streaming: on_token failed (%s)", exc)
+        finally:
+            if self._checkpointer_ctx is not None:
+                self._checkpointer_ctx.__exit__(None, None, None)
+                self._checkpointer_ctx = None
+                self.graph = self.workflow.compile()
+
+        # Clear the checkpoint on successful completion (mirrors
+        # _run_graph()) so a later, unrelated run for the same ticker+date
+        # doesn't see stale state. A StreamCancelled/exception above skips
+        # this, leaving the checkpoint in place for the next attempt to
+        # resume from -- the entire point of this feature.
+        if self.config.get("checkpoint_enabled"):
+            clear_checkpoint(self.config["data_cache_dir"], company_name, str(trade_date))
 
         self.curr_state = final_state
         self._log_state(trade_date, final_state)
@@ -623,13 +706,32 @@ class TradingAgentsGraph:
         args = self.propagator.get_graph_args()
 
         # Inject thread_id so same ticker+date resumes, different date starts fresh.
+        #
+        # graph_input is None on a genuine resume, NOT init_agent_state. This
+        # used to always pass init_agent_state, which defeated the whole
+        # feature: LangGraph applies non-None input as a fresh update to the
+        # thread's channels on top of whatever the checkpoint holds, so every
+        # already-completed node re-ran anyway (verified empirically -- a toy
+        # 2-node graph crashed at node b, and a second invoke() with a full
+        # fresh input re-ran node a too, identical to no checkpoint existing
+        # at all). Passing None is what tells LangGraph "there is no new
+        # input, continue this thread from its last checkpoint" -- confirmed
+        # against the same toy graph: node a is skipped and only node b (the
+        # one that actually failed) executes.
+        graph_input = init_agent_state
         if self.config.get("checkpoint_enabled"):
             tid = thread_id(company_name, str(trade_date))
             args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = tid
+            resuming = (
+                checkpoint_step(self.config["data_cache_dir"], company_name, str(trade_date))
+                is not None
+            )
+            if resuming:
+                graph_input = None
 
         if self.debug:
             trace = []
-            for chunk in self.graph.stream(init_agent_state, **args):
+            for chunk in self.graph.stream(graph_input, **args):
                 if len(chunk["messages"]) == 0:
                     pass
                 else:
@@ -641,7 +743,7 @@ class TradingAgentsGraph:
             for chunk in trace:
                 final_state.update(chunk)
         else:
-            final_state = self.graph.invoke(init_agent_state, **args)
+            final_state = self.graph.invoke(graph_input, **args)
 
         # Store current state for reflection.
         self.curr_state = final_state

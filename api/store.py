@@ -101,6 +101,7 @@ class SqlRunStore:
         refresh_data: bool = False,
         requested_by: str | None = None,
         time_horizon: str | None = None,
+        resume: bool = False,
     ) -> RunDetail:
         async with self._sessionmaker() as session:
             row = Run(
@@ -113,6 +114,44 @@ class SqlRunStore:
                 refresh_data=refresh_data,
                 requested_by=requested_by,
                 requested_time_horizon=time_horizon,
+                resume=resume,
+            )
+            session.add(row)
+            await session.commit()
+            return _to_detail(row)
+
+    async def create_resume(
+        self, run_id: str, requested_by: str | None = None
+    ) -> RunDetail | None:
+        """Queue a new run that continues a failed one instead of starting
+        fresh -- same ticker, date, profile, refresh_data and time horizon
+        as the original, plus resume=True so the worker lets the engine pick
+        up whatever checkpoint the failed attempt left behind.
+
+        Returns None when there is nothing to resume: no such run, or the
+        run hasn't reached ``failed`` (a queued/running run has nothing to
+        continue from yet; a completed/cancelled run doesn't need to).
+        Whether a checkpoint actually exists is NOT checked here -- the
+        engine's own resume logic already degrades gracefully to a fresh
+        start if there is nothing to pick up, so this only needs to gate on
+        "does it make sense to ask," not "will there be anything to resume."
+        """
+        async with self._sessionmaker() as session:
+            original = await session.get(Run, run_id)
+            if original is None or original.status != RunStatus.FAILED.value:
+                return None
+
+            row = Run(
+                id=new_run_id(),
+                ticker=original.ticker,
+                analysis_date=original.analysis_date,
+                profile=original.profile,
+                status=RunStatus.QUEUED.value,
+                created_at=utcnow(),
+                refresh_data=original.refresh_data,
+                requested_by=requested_by,
+                requested_time_horizon=original.requested_time_horizon,
+                resume=True,
             )
             session.add(row)
             await session.commit()
@@ -193,34 +232,39 @@ class SqlRunStore:
         """Atomically take the oldest queued run and mark it running.
 
         The UPDATE is conditional on the row STILL being queued, so if two
-        workers race for the same id exactly one wins — the loser's update
-        matches zero rows and it simply tries again. Doing this as
-        select-then-update without the condition would hand the same job to
-        both, and a duplicated run costs a full analysis.
+        callers race for the same id exactly one wins — the loser's update
+        matches zero rows. That loser retries against the next-oldest
+        candidate in the SAME call rather than returning None: with only one
+        worker lane this loop never repeats, but with several lanes racing
+        concurrently (see api/worker.py's worker_lane), a bare loss must not
+        be reported the same way as "queue empty" — the caller's response to
+        None is a multi-second poll sleep, which would leave a lane dormant
+        while a different row is still sitting there queued.
         """
         async with self._sessionmaker() as session:
-            result = await session.execute(
-                select(Run)
-                .where(Run.status == RunStatus.QUEUED.value)
-                .order_by(Run.created_at)
-                .limit(1)
-            )
-            candidate = result.scalar_one_or_none()
-            if candidate is None:
-                return None
+            while True:
+                result = await session.execute(
+                    select(Run)
+                    .where(Run.status == RunStatus.QUEUED.value)
+                    .order_by(Run.created_at)
+                    .limit(1)
+                )
+                candidate = result.scalar_one_or_none()
+                if candidate is None:
+                    return None  # genuinely nothing queued
 
-            claimed = await session.execute(
-                update(Run)
-                .where(Run.id == candidate.id, Run.status == RunStatus.QUEUED.value)
-                .values(status=RunStatus.RUNNING.value, started_at=utcnow())
-            )
-            await session.commit()
+                claimed = await session.execute(
+                    update(Run)
+                    .where(Run.id == candidate.id, Run.status == RunStatus.QUEUED.value)
+                    .values(status=RunStatus.RUNNING.value, started_at=utcnow())
+                )
+                await session.commit()
 
-            if claimed.rowcount == 0:
-                return None  # lost the race; caller polls again
+                if claimed.rowcount == 0:
+                    continue  # lost the race; try the next-oldest candidate
 
-            await session.refresh(candidate)
-            return candidate
+                await session.refresh(candidate)
+                return candidate
 
     async def mark_completed(
         self, run_id: str, verdict: Verdict, reports: Reports

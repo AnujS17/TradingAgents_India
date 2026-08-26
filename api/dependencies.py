@@ -43,6 +43,10 @@ class RunStore(Protocol):
         time_horizon: str | None = None,
     ) -> RunDetail: ...
 
+    async def create_resume(
+        self, run_id: str, requested_by: str | None = None
+    ) -> RunDetail | None: ...
+
     async def get(self, run_id: str) -> RunDetail | None: ...
 
     async def find(
@@ -132,6 +136,24 @@ class InMemoryRunStore:
             status=RunStatus.QUEUED,
             created_at=datetime.now(timezone.utc),
             requested_time_horizon=time_horizon,
+        )
+        self._runs[run.id] = run
+        return run
+
+    async def create_resume(
+        self, run_id: str, requested_by: str | None = None
+    ) -> RunDetail | None:
+        original = self._runs.get(run_id)
+        if original is None or original.status is not RunStatus.FAILED:
+            return None
+        run = RunDetail(
+            id=new_run_id(),
+            ticker=original.ticker,
+            analysis_date=original.analysis_date,
+            profile=original.profile,
+            status=RunStatus.QUEUED,
+            created_at=datetime.now(timezone.utc),
+            requested_time_horizon=original.requested_time_horizon,
         )
         self._runs[run.id] = run
         return run
