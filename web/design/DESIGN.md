@@ -43,9 +43,17 @@ Copy the `:root` block verbatim from the reference file. Current values:
 
 **Colour rules**
 - One accent family (the blues). `--accent-1` is the CTA colour everywhere.
-- **Green and red are reserved for price direction only.** Never use them for
-  bull/bear, ratings, or status. Indian retail readers already read green/red as
-  "my position is up/down"; borrowing them mislabels the bear as bad news.
+- **Green and red are reserved for price direction only** — with one scoped
+  exception, made 2026-08-23 by explicit user override after this rule was
+  raised and the tradeoff stated plainly: the 5-tier rating (Sell..Buy) and
+  the 3-tier action badge (Sell/Hold/Buy) now use a real diverging red-grey-
+  green scale (`web/app/src/lib/rating-color.ts`). Every non-color pairing
+  keeps the rest of this rule as written: still never use green/red for
+  **bull/bear** (that's an argument stance, not a price call — stays on the
+  navy/`#1B6FA8` pair) or for any other status/badge on the page. Indian
+  retail readers already read green/red as "my position is up/down";
+  borrowing them for anything that isn't the rating/action fields still
+  mislabels something the reader will misread as a price move.
 - Light sections: `#fff` / `--tint` ground, `--ink` headings, `--muted` body.
 - Dark sections: `--void` ground, white headings, `rgba(255,255,255,.55–.62)` body.
 

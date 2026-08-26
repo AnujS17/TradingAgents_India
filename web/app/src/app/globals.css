@@ -61,6 +61,90 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 .icon-tile-shadow { box-shadow: 0 7px 24px 0 rgba(36,162,255,.16) inset; }
 
 /* ═══════════════════════════════════════════════════════════════════
+   Trust strip "argument" cards (TrustStrip.tsx, rewritten 2026-08-22).
+   Light section, one accent family (navy / accent-1 / #1B6FA8 bull-bear
+   pair), amber reused verbatim from the research page's "Not final" badge.
+   Deliberately not dark-glass (Deck.tsx two sections down already owns
+   that treatment) and not green (DESIGN.md §1: reserved for price
+   direction). Radius stays rounded-2xl, the page's one card radius.
+   ═══════════════════════════════════════════════════════════════════ */
+.argue-card {
+  position: relative;
+  border-radius: 1rem;
+  border: 1px solid var(--line-1);
+  background: #fff;
+  padding: 22px;
+  transition: transform .3s var(--ease), border-color .25s ease, box-shadow .3s var(--ease);
+}
+/* Specificity beats .u-reveal.anim-ready.is-in (3 classes) on purpose --
+   the reveal's resting transform (translateY(0)) must not fight the
+   hover lift once the card has settled. */
+.argue-card.anim-ready.is-in:hover,
+.argue-card.anim-ready.is-in:focus-within {
+  transform: translateY(-4px);
+  border-color: rgba(28,111,230,.45);
+  box-shadow: 0 20px 44px -18px rgba(28,111,230,.32);
+}
+
+.argue-card--featured {
+  border-color: #D3E1F7;
+  background: linear-gradient(180deg, #FBFDFF 0%, #fff 60%);
+  padding-top: 30px; /* room for the badge overlapping the top edge */
+}
+
+/* Amber, not orange: this is a genuinely NEW color on the page, not reuse
+   of an existing badge (an earlier version of this comment claimed it
+   matched TheCall.tsx's "Not final" badge -- that badge doesn't exist
+   anywhere in this codebase, live or static; that was a false memory,
+   corrected here). Introduced deliberately as a secondary status color,
+   distinct from the locked navy/blue accent family and from the reserved
+   green/red price-direction pair -- flag this choice for review rather
+   than treat it as already-settled. */
+.argue-card__badge {
+  position: absolute; top: -13px; left: 22px;
+  font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .6875rem;
+  letter-spacing: .03em;
+  background: #FFF6E8; color: #8A5A00; border: 1px solid #F3D9A8;
+  border-radius: 999px; padding: 5px 12px;
+}
+
+.argue-card__topic {
+  font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .9375rem;
+  color: var(--ink); letter-spacing: -.005em;
+}
+
+.argue-card__exchange { margin-top: 14px; display: flex; flex-direction: column; }
+.argue-card__who {
+  display: block; font-family: 'Inter Tight', sans-serif; font-weight: 900; font-size: .6875rem;
+  letter-spacing: .09em; text-transform: uppercase;
+}
+.argue-card__side--bull .argue-card__who { color: var(--navy); }
+.argue-card__side--bear .argue-card__who { color: #1B6FA8; }
+.argue-card__line { font-size: .8125rem; line-height: 1.5; color: #3A4152; margin-top: 4px; }
+
+/* The seam, reinterpreted at card scale: a short horizontal gradient with
+   a connecting dot, not a literal copy of the research page's vertical
+   ledger rule (that pattern owns the full contested-point comparison;
+   this is a compact landing-page echo of the same idea). */
+.argue-card__seam { height: 1px; margin: 12px 0; background: linear-gradient(90deg, var(--navy), #1B6FA8); opacity: .25; position: relative; }
+.argue-card__seam::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: linear-gradient(90deg, var(--navy), #1B6FA8);
+}
+
+.argue-card__cta {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 16px;
+  font-family: 'Inter Tight', sans-serif; font-weight: 700; font-size: .8125rem;
+  color: var(--accent-1); text-decoration: none;
+  transition: gap .2s ease, color .2s ease;
+}
+.argue-card__cta:hover { gap: 9px; color: var(--navy); }
+.argue-card__cta:active { transform: scale(.97); }
+.argue-card__cta svg { transition: transform .2s ease; }
+.argue-card__cta:hover svg { transform: translateX(2px); }
+
+/* ═══════════════════════════════════════════════════════════════════
    Motion vocabulary — DESIGN.md §4, lifted from univest.in
    ═══════════════════════════════════════════════════════════════════ */
 @keyframes heroRise {
@@ -503,38 +587,78 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 /* ── Live per-team panel. Reuses .ag/.team's label-plus-shape language
    above (DESIGN.md §4 rule 4: never a pulsing dot) for per-agent status
    inside each team's card, plus a bounded, themed-scrollbar text well —
-   same pattern as .rep__doc, sized for a live snippet rather than a full
-   report. ────────────────────────────────────────────────────────────── */
+   same role as .rep__doc (agent-authored report prose), so body size
+   matches it (15px) rather than inventing a third size for the same job.
+   h1-h4 do NOT redeclare font-family: the global `h1,h2,h3,h4{ font-family:
+   Inter Tight }` rule (top of this file) already covers every heading
+   level a browser can produce here. ─────────────────────────────────── */
 .live__doc { max-height: 220px; overflow-y: auto; padding: 2px 2px 4px;
-             scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin; }
+             scrollbar-color: #C3CEE4 transparent; scrollbar-width: thin;
+             font-variant-numeric: tabular-nums;
+             opacity: 1; transform: translateY(0);
+             transition: opacity var(--dur-open) var(--ease-open), transform var(--dur-open) var(--ease-open); }
 .live__doc > *:first-child { margin-top: 0; }
-.live__doc p { font-size: .875rem; line-height: 1.6; color: #3A4152; max-width: 68ch; }
-.live__doc p + p { margin-top: 10px; }
-.live__doc strong { color: var(--ink); font-weight: 600; }
-.live__doc em { color: #3A4152; }
-/* Obvious scale/weight steps between levels, more space above a heading
-   than below it (craft-floor's Type check) -- these reports rarely go
-   past ### in practice, but ##/#### are styled too for whatever a model
-   actually emits. */
-.live__doc h1, .live__doc h2, .live__doc h3, .live__doc h4 {
-  font-family: 'Inter Tight', sans-serif; color: var(--ink); font-weight: 800;
-  letter-spacing: -.01em; margin-top: 16px;
+
+/* Entrance for a report well the instant an agent's first token lands
+   (mounted conditionally in LiveStream's AgentRow). @starting-style, not a
+   JS-armed class: the element's normal state is fully visible, and the
+   browser transitions FROM the starting-style values on mount/display
+   change with no script involved. Stronger progressive enhancement than
+   the .u-reveal `anim-ready` idiom used elsewhere in this file -- there is
+   no window where a failed effect could leave this permanently hidden,
+   because no effect is involved. Unsupported browsers (pre-2024 engines)
+   just render at the normal opacity/transform immediately. */
+@starting-style {
+  .live__doc { opacity: 0; transform: translateY(4px); }
 }
-.live__doc h1 { font-size: 1.0625rem; }
-.live__doc h2 { font-size: 1rem; }
-.live__doc h3, .live__doc h4 { font-size: .9375rem; }
-.live__doc h1 + *, .live__doc h2 + *, .live__doc h3 + *, .live__doc h4 + * { margin-top: 6px; }
-.live__doc ul, .live__doc ol { margin-top: 8px; padding-left: 1.1em; }
+
+/* Top/bottom read cue, JS-gated (`.has-overflow`, set only when the well's
+   content actually exceeds the 220px cap -- see LiveStream.tsx). A
+   fixed-depth mask on a well that ISN'T scrolling would fade real, fully
+   visible text at the edges; gating it on actual overflow keeps the effect
+   truthful. Once a report exceeds the cap, the sticky-bottom auto-scroll
+   below means the reader is usually looking at a mid-sentence cut at the
+   top -- the fade signals "there is more above," rather than reading as
+   an abrupt truncation. */
+.live__doc.has-overflow {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+          mask-image: linear-gradient(to bottom, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+}
+.live__doc p { font-size: .9375rem; line-height: 1.66; color: #3A4152; max-width: 68ch; }
+.live__doc p + p { margin-top: 12px; }
+.live__doc strong { color: var(--ink); font-weight: 600; }
+.live__doc em { color: var(--navy); font-style: italic; }
+/* Two real roles, not four near-identical ones: h1/h2 (rare -- these
+   reports mostly write ###) get one clearly larger step; h3 and anything
+   deeper share the second, still clearly above the 15px body. Weight and
+   colour carry the distinction, not just 1-2px of size (craft-floor). */
+.live__doc h1, .live__doc h2 { color: var(--ink); font-weight: 800; letter-spacing: -.01em;
+                                 font-size: 1.125rem; margin-top: 18px; }
+.live__doc h3, .live__doc h4, .live__doc h5, .live__doc h6 {
+  color: var(--ink); font-weight: 700; letter-spacing: -.005em; font-size: 1rem; margin-top: 16px;
+}
+.live__doc h1 + *, .live__doc h2 + *, .live__doc h3 + *,
+.live__doc h4 + *, .live__doc h5 + *, .live__doc h6 + * { margin-top: 6px; }
+.live__doc ul, .live__doc ol { margin-top: 8px; padding-left: 1.15em; }
 .live__doc ul { list-style: disc; }
 .live__doc ol { list-style: decimal; }
-.live__doc li { font-size: .875rem; line-height: 1.55; color: #3A4152; margin-top: 4px; }
-.live__doc li::marker { color: #9AA1B4; }
-.live__doc table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .8125rem; }
-.live__doc th, .live__doc td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-1); }
+.live__doc li { font-size: .9375rem; line-height: 1.6; color: #3A4152; margin-top: 5px; }
+.live__doc li::marker { color: var(--accent-1); font-weight: 700; }
+.live__doc table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: .8125rem; }
+.live__doc th, .live__doc td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line-1); }
 .live__doc thead th { font-family: 'Inter Tight', sans-serif; font-weight: 700; color: #676D80;
                        font-size: .6875rem; letter-spacing: .04em; text-transform: uppercase; }
 .live__doc code { font-family: ui-monospace, monospace; font-size: .8125rem; background: #F4F6FB;
                    border-radius: 4px; padding: 1px 5px; color: var(--ink-2); }
+.live__doc blockquote { border-left: 1px solid var(--line-2); padding-left: 12px; margin-top: 10px;
+                         color: #676D80; font-style: italic; }
+
+/* Active team gets the same tinted, bordered treatment as an evidence
+   card (.trace__in below) -- real signal for "working right now", reused
+   from an already-established token pair rather than a new colour. */
+.live__team { border-radius: 28px; border: 1px solid var(--line-2); background: #fff;
+              padding: 24px; transition: background-color .2s, border-color .2s; }
+.live__team.is-active { background: #F6FAFF; border-color: #D3E1F7; }
 
 /* ── Contested-point ledger. The seam is the spine of the verdict: one
    continuous rule down the centre, with each contested topic breaking it.
@@ -598,20 +722,65 @@ main > * { min-width: 0; }
 /* ── Report list. Length-honest: the bar shows how long each document
    actually is, so a 3,000-word report never masquerades as a 200-word
    note. ──────────────────────────────────────────────────────────────── */
-.rep { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; align-items: baseline;
-       width: 100%; padding: 14px 0; border-bottom: 1px solid var(--line-1);
-       background: none; border-left: 0; border-right: 0; border-top: 0; text-align: left; cursor: pointer; }
+/* --rep-color is set inline per row (ReportsRecord.tsx, barColor()) so the
+   open/hover text and chevron pick up that report's own color — navy for
+   bull_case, #1B6FA8 for bear_case, the verdict's rating color for
+   investment_plan/final_decision/trader_plan, accent-3 for the four
+   neutral analyst reports and risk_debate. Falls back to accent-1 so a row
+   that never sets the variable (there shouldn't be one) still gets a
+   sensible hover color instead of inheriting nothing. */
+/* 2026-08-23, second pass: the thin length-bar read as a near-invisible
+   line and the row gave no sense of what a report actually said without
+   opening it (design review). Replaced with a real excerpt (the report's
+   own Executive Summary when it wrote one, format.ts excerptFor()) and a
+   "X min read" figure — the same real word count, in a unit a reader
+   parses at a glance instead of a bar they have to compare by eye. */
+.rep { display: flex; flex-direction: column; gap: 6px;
+       width: 100%; padding: 16px 0; border-bottom: 1px solid var(--line-1);
+       background: none; border-left: 0; border-right: 0; border-top: 0; text-align: left; cursor: pointer;
+       transition: background-color .15s ease; }
+.rep__top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .rep__t { font-family: 'Inter Tight', sans-serif; font-weight: 600; font-size: 1rem; color: var(--ink);
-          display: inline-flex; align-items: center; gap: 9px; }
-.rep__chev { width: 11px; height: 11px; color: #676D80; transition: transform var(--dur-open) var(--ease-open); }
-.rep[aria-expanded="true"] .rep__chev { transform: rotate(90deg); color: var(--accent-1); }
-.rep[aria-expanded="true"] .rep__t { color: var(--accent-1); }
-.rep__w { font-family: 'Inter Tight', sans-serif; font-size: .75rem; font-weight: 700; color: #676D80;
+          display: inline-flex; align-items: center; gap: 9px; transition: color .15s ease; }
+.rep__chev { width: 11px; height: 11px; color: #676D80; transition: transform var(--dur-open) var(--ease-open), color .15s ease; }
+.rep[aria-expanded="true"] .rep__chev { transform: rotate(90deg); color: var(--rep-color, var(--accent-1)); }
+.rep[aria-expanded="true"] .rep__t { color: var(--rep-color, var(--accent-1)); }
+
+.rep__meta { display: inline-flex; align-items: baseline; gap: 8px; flex-shrink: 0; white-space: nowrap; }
+.rep__read { font-family: 'Inter Tight', sans-serif; font-size: .75rem; font-weight: 800;
+             color: var(--rep-color, var(--accent-1)); font-variant-numeric: tabular-nums; }
+.rep__w { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 600; color: #676D80;
           font-variant-numeric: tabular-nums; }
-.rep__bar { grid-column: 1 / -1; height: 3px; border-radius: 3px; background: var(--line-1); overflow: hidden; }
-.rep__bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent-3);
-              transform-origin: left; transform: scaleX(var(--len,0)); transition: transform .6s var(--ease); }
-.rep:hover .rep__t { color: var(--accent-1); }
+
+/* Aligned under the title text (chevron 11px + 9px gap), not the chevron
+   itself. 2-line clamp: a preview, not the report — the full text is one
+   click away in the same spot, and doubling it there would be redundant
+   (the excerpt is hidden entirely once the row is open, see the component). */
+.rep__excerpt { font-size: .875rem; line-height: 1.55; color: #5A6070; padding-left: 20px; max-width: 68ch;
+                display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.rep:hover .rep__t,
+.rep:hover .rep__chev { color: var(--rep-color, var(--accent-1)); }
+/* A colored background wash on hover, not just the text — the text-only
+   hover felt weak (design review, 2026-08-23). color-mix keeps this a
+   one-line rule per row instead of a second inline style. Press state one
+   step stronger: this button had no tactile feedback at all before. */
+.rep:hover { background: color-mix(in srgb, var(--rep-color, var(--accent-1)) 5%, transparent); }
+.rep:active { background: color-mix(in srgb, var(--rep-color, var(--accent-1)) 9%, transparent); }
+
+/* ── Report groups (ReportsRecord.tsx, 2026-08-23 rework) ────────────
+   Ten flat rows read as one undifferentiated list (design review). Grouped
+   by the same five teams TheDesk's sidebar already shows, each group in its
+   own bordered well so the structure is visible, not just implied by
+   spacing. Tight inside a well (rows share hairlines), generous between
+   wells (gap-9 on the flex column in the component, 36px) — the ratio
+   DESIGN.md §3 asks for, applied here by choice, not by rule. */
+.rep-group__label { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .8125rem;
+                     letter-spacing: .04em; text-transform: uppercase; color: var(--ink); }
+.rep-group__count { font-family: 'Inter Tight', sans-serif; font-weight: 700; font-size: .75rem;
+                     color: #676D80; font-variant-numeric: tabular-nums; }
+.rep-group__rows { border: 1px solid var(--line-1); border-radius: .875rem; padding: 0 16px; overflow: hidden; }
+.rep-group__rows > div:last-child .rep { border-bottom: 0; }
 
 /* retained for the in-flight frame: a report not yet written. State is
    carried by weight and colour, not by opacity, so it stays legible. */
@@ -633,15 +802,16 @@ main > * { min-width: 0; }
 .rep__more { font-size: .8125rem; color: #676D80; margin-top: 14px; padding-top: 12px;
              border-top: 1px solid var(--line-1); max-width: 68ch; }
 
-/* ── News source citations ──────────────────────────────────────────
-   Ported from web/design/research/index.html:134-141 (the evidence-trace
-   card styling only — not .fig/.trace, which drive an inline-prose
-   drill-down this panel does not use; see docs/superpowers/specs/
-   2026-08-19-news-sources-design.md). */
+/* ── Evidence-trace card ──────────────────────────────────────────────
+   Ported from web/design/research/index.html:134-141. Used by TrustStrip's
+   per-card evidence panels only, as of 2026-08-23 — SourcesPanel used to
+   share this (see git history / .source-row below for why it moved off). */
 .trace__in { margin-top: 16px; border: 1px solid #D3E1F7; background: #F6FAFF;
              border-radius: 14px; padding: 15px 17px; text-align: left; }
+/* var(--navy), not --accent-1: at 11px this measured 4.49:1 on #F6FAFF,
+   just under the 4.5:1 floor. --navy clears it at 8.75:1. */
 .trace__src { font-family: 'Inter Tight', sans-serif; font-size: .6875rem; font-weight: 900;
-              letter-spacing: .085em; color: var(--accent-1); text-transform: uppercase; }
+              letter-spacing: .085em; color: var(--navy); text-transform: uppercase; }
 .trace__k { font-size: .8125rem; color: #676D80; margin-top: 9px; }
 /* Preflight resets an <a>'s color/decoration to `inherit`, so the linked
    article title (rendered inside .trace__k when the citation has a url)
@@ -649,6 +819,24 @@ main > * { min-width: 0; }
 .trace__k a { color: var(--accent-1); text-decoration: underline; text-underline-offset: 2px; }
 .trace__k a:hover { color: var(--navy); }
 .trace__note { font-size: .8125rem; line-height: 1.55; color: #5A6070; margin-top: 7px; }
+
+/* ── News source list (SourcesPanel.tsx, 2026-08-23 rework) ──────────
+   A tinted card per source read as heavy for a link list (design review),
+   and left a dangling em dash on rows with no snippet — every real source
+   seen so far has none. Replaced with the page's plain hairline-list
+   idiom (same divider vocabulary as .rep/.rep-group__rows): one dense row
+   per source, the headline as the link, source + date as small trailing
+   meta on the same line. No card, no snippet, no separate uppercase
+   source-label line — real citation data kept, just not given its own
+   visual weight. */
+.source-list { display: flex; flex-direction: column; }
+.source-row { padding: 10px 0; border-bottom: 1px solid var(--line-1); }
+.source-row:last-child { border-bottom: 0; }
+.source-row__link { font-size: .9375rem; font-weight: 500; color: var(--accent-1);
+                     text-decoration: underline; text-underline-offset: 2px; }
+.source-row__link:hover { color: var(--navy); }
+.source-row__link--static { color: var(--ink-2); text-decoration: none; }
+.source-row__meta { display: block; font-size: .8125rem; color: #676D80; margin-top: 2px; }
 
 /* ═══════════════════════════════════════════════════════════════════
    Reduced motion — DESIGN.md §4 rule 6. Drop movement, keep opacity/colour.

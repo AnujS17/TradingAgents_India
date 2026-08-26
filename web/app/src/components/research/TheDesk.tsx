@@ -53,7 +53,7 @@ const TEAMS: Team[] = [
 
 export function TheDesk() {
   return (
-    <aside className="lg:sticky lg:top-24">
+    <aside className="lg:sticky lg:top-24 min-w-0">
       <h2 className="font-tight font-extrabold text-[#010101] text-lg">The desk</h2>
       <p className="copy text-[#6F6F6F] mt-1 mb-6">Five teams. Each handed its work to the next.</p>
 

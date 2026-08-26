@@ -106,7 +106,7 @@ export function UseCases() {
                 <h3 className="font-tight font-extrabold text-[#010101] text-xl leading-tight">
                   {item.title}
                 </h3>
-                <p className="text-sm text-[#747474] mt-2.5 leading-relaxed">{item.body}</p>
+                <p className="copy text-[#747474] mt-2.5">{item.body}</p>
               </div>
             </div>
           </div>
