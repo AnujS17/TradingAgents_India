@@ -306,6 +306,49 @@ def test_merging_only_applies_to_news_methods():
 
 
 @pytest.mark.unit
+def test_global_news_chain_reaches_its_first_vendor_when_not_in_merge_set():
+    """General regression guard for the class of bug diagnosed 2026-08-25
+    (not a snapshot of the current default -- see tool_vendors.get_global_news
+    in default_config.py, which has since moved to yfinance directly and no
+    longer shapes its chain around this). The mechanism this guards: if a
+    method's configured chain contains a vendor that is ALSO in
+    merged_news_vendors (shared across get_news/get_global_news), that one
+    vendor gets called via the merge pass, always "succeeds" (a vendor
+    returning any string, e.g. yf.Search() which never errors), and
+    route_to_vendor returns immediately -- every vendor placed BEFORE it in
+    the configured chain is silently never attempted, even though it looks
+    like it's first in line. Here: a vendor absent from merged_news_vendors
+    must actually run when it's first in the chain."""
+
+    def gdelt_success(*args, **kwargs):
+        return "gdelt global news"
+
+    def yfinance_should_never_be_called(*args, **kwargs):
+        raise AssertionError("yfinance must not be reached for get_global_news")
+
+    vendor_methods = {
+        "get_global_news": {
+            "gdelt": gdelt_success,
+            "india_rss": lambda *a, **k: "india_rss global news",
+            "yfinance": yfinance_should_never_be_called,
+        }
+    }
+    # Mirrors the real shape: yfinance stays in merged_news_vendors (for
+    # get_news's benefit) but is absent from get_global_news's own chain.
+    config = {
+        "tool_vendors": {"get_global_news": "gdelt,india_rss"},
+        "data_vendors": {"news_data": "gdelt,india_rss"},
+        "merged_news_vendors": ["google_news", "yfinance"],
+    }
+
+    with patch("tradingagents.dataflows.interface.VENDOR_METHODS", vendor_methods):
+        with patch("tradingagents.dataflows.interface.get_config", return_value=config):
+            result = route_to_vendor("get_global_news", "2026-08-25", None, None)
+
+    assert result == "gdelt global news"
+
+
+@pytest.mark.unit
 def test_news_vendors_are_generic_equity_sources():
     news_vendors = set(VENDOR_METHODS["get_news"])
     global_news_vendors = set(VENDOR_METHODS["get_global_news"])

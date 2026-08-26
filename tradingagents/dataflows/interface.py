@@ -14,6 +14,7 @@ from .y_finance import (
     get_insider_transactions as get_yfinance_insider_transactions,
 )
 from .yfinance_news import get_news_yfinance, get_global_news_yfinance
+from .india_news import get_global_news as get_india_rss_global_news
 from .finnhub_news import get_news as get_finnhub_news, get_global_news as get_finnhub_global_news
 from .gdelt_news import get_news as get_gdelt_news, get_global_news as get_gdelt_global_news
 from .google_news import get_news as get_google_news
@@ -73,6 +74,7 @@ VENDOR_LIST = [
     "gdelt",
     "google_news",
     "pandas_ta",
+    "india_rss",
 ]
 
 NEWS_METHODS = frozenset({"get_news", "get_global_news"})
@@ -118,10 +120,22 @@ VENDOR_METHODS = {
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        # gdelt kept registered but is NOT in the default tool_vendors
+        # chain -- unreliable in practice (rate-limited through most of
+        # 2026-08-25's testing) and, combined with yfinance also being in
+        # merged_news_vendors, used to make it look first-in-line while
+        # never actually being invoked (see default_config.py's
+        # tool_vendors.get_global_news history comment).
         "alpha_vantage": get_alpha_vantage_global_news,
         "finnhub": get_finnhub_global_news,
         "gdelt": get_gdelt_global_news,
         "yfinance": get_global_news_yfinance,
+        # Registered but NOT in the default chain -- available for a
+        # config that wants the already-filtered India RSS pool instead of
+        # yfinance's occasionally-generic Search results; see
+        # default_config.py for why it isn't the default (duplicated
+        # news_analyst.py's own separate fetch_global_india_news() call).
+        "india_rss": get_india_rss_global_news,
     },
     "get_insider_transactions": {
         "alpha_vantage": get_alpha_vantage_insider_transactions,

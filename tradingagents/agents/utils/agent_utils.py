@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import logging
+import time
 from typing import Any, Mapping, Optional
 
 import yfinance as yf
@@ -209,6 +210,68 @@ def _clean_identity_value(value: Any) -> Optional[str]:
 # most dual-listed Indian names.
 _INDIA_EXCHANGE_SUFFIXES = (".NS", ".BO")
 
+# Retry policy for each yfinance probe (both the .info quote check and the
+# recent-history check below). Neither call is wrapped by stockstats_utils's
+# yf_retry — that one only retries YFRateLimitError specifically, and what
+# actually hit this (TORNTPOWER.NS, 2026-08-25) was a plain, untyped
+# exception on a single unretried call, which fell through to .BO and
+# silently accepted it for the entire run. yfinance's .info endpoint is
+# unofficial/scraped, not a documented API, and informally throttles a
+# single IP under sustained request volume rather than always failing with
+# a clean, catchable rate-limit error -- a short retry absorbs exactly that
+# kind of transient miss instead of treating it as "this exchange doesn't
+# have the ticker."
+_RESOLUTION_MAX_RETRIES = 2
+_RESOLUTION_RETRY_BASE_DELAY = 1.0
+
+# Window used to confirm a candidate has USABLE recent price history, not
+# just a live quote. The actual bug: TORNTPOWER.BO's .info returned a valid
+# previousClose (the quote endpoint works), but its OHLCV history was a
+# single row from over a month earlier -- previousClose alone doesn't prove
+# the history endpoint (what get_verified_market_snapshot / load_ohlcv
+# actually build the analysis from) has anything recent to show. 5 calendar
+# days comfortably covers every NSE/BSE holiday cluster without needing
+# date-math against a trading calendar.
+_RESOLUTION_HISTORY_CHECK_PERIOD = "5d"
+
+
+def _probe_with_retry(func, max_retries: int = _RESOLUTION_MAX_RETRIES, base_delay: float = _RESOLUTION_RETRY_BASE_DELAY):
+    """Retry a yfinance call on any exception, short linear backoff.
+
+    Returns the call's result, or None once every attempt has failed --
+    the caller treats None the same as a clean "not found" for this probe,
+    not a hard error, since resolve_ticker_symbol's own contract is to try
+    the next exchange (or fail open) rather than raise here.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except Exception as exc:  # noqa: BLE001 — network trouble, not a "not found" answer
+            if attempt < max_retries:
+                logger.debug(
+                    "yfinance probe failed (attempt %s/%s): %s",
+                    attempt + 1, max_retries + 1, exc,
+                )
+                time.sleep(base_delay * (attempt + 1))
+            else:
+                logger.debug(
+                    "yfinance probe failed after %s attempts: %s",
+                    max_retries + 1, exc,
+                )
+    return None
+
+
+def _has_recent_history(candidate: str) -> bool:
+    """True when ``candidate`` has at least one trading row in the last
+    _RESOLUTION_HISTORY_CHECK_PERIOD -- confirms the history endpoint that
+    the actual analysis is built from has something usable, not just that
+    the quote endpoint answered.
+    """
+    history = _probe_with_retry(
+        lambda: yf.Ticker(candidate).history(period=_RESOLUTION_HISTORY_CHECK_PERIOD)
+    )
+    return history is not None and not history.empty
+
 
 class TickerNotFoundError(Exception):
     """Raised by resolve_ticker_symbol() when a bare stock ticker was
@@ -270,14 +333,26 @@ def resolve_ticker_symbol(ticker: str, asset_type: str = "stock") -> str:
     acceptable answer.
 
     Raises TickerNotFoundError if the ticker was confirmed absent on both
-    NSE and BSE (both exchanges genuinely answered "not found", not a
-    network error) — this is intentional and meant to fail the run loudly
-    rather than proceed with an unresolved or foreign ticker.
+    NSE and BSE (both exchanges genuinely answered "not found" or "no
+    usable recent history" — not a network error) — this is intentional
+    and meant to fail the run loudly rather than proceed with an
+    unresolved or foreign ticker.
 
     Best-effort only for genuine infrastructure trouble: if every probe
     raised (total network/API failure, so NSE/BSE were never actually
     checked), returns the ticker unchanged rather than blocking the run
     over something that isn't a "this ticker doesn't exist" answer at all.
+
+    Each probe is retried a few times before being treated as unavailable
+    (_probe_with_retry), and a candidate must have BOTH a live quote
+    (previousClose) AND actual recent price history (_has_recent_history)
+    to be accepted — not quote data alone. TORNTPOWER.NS, 2026-08-25: a
+    single unretried .info call failed transiently, fell through to .BO,
+    whose quote endpoint answered fine but whose OHLCV history was one row
+    from over a month earlier — get_verified_market_snapshot then built an
+    entire technical read (and the trader's entry price) on that stale
+    print, undetected, because previousClose alone doesn't prove the
+    history endpoint has anything current.
     """
     normalized = ticker.strip().upper()
     if asset_type == "crypto" or "." in normalized or "-" in normalized:
@@ -296,14 +371,22 @@ def resolve_ticker_symbol(ticker: str, asset_type: str = "stock") -> str:
     with _muted_logger("yfinance"):
         for suffix in _INDIA_EXCHANGE_SUFFIXES:
             candidate = f"{normalized}{suffix}"
-            try:
-                info = yf.Ticker(candidate).info or {}
-            except Exception as exc:  # noqa: BLE001 — network trouble, not a "not found" answer
-                logger.debug("Ticker resolution check failed for %s: %s", candidate, exc)
+            info = _probe_with_retry(lambda c=candidate: yf.Ticker(c).info or {})
+            if info is None:
+                # Every retry failed -- couldn't get an answer at all from
+                # this exchange, not a confirmed "not found". Try the next
+                # suffix; this candidate never counts toward
+                # checked_at_least_one_exchange.
                 continue
             checked_at_least_one_exchange = True
-            if info.get("previousClose") is not None:
+            if info.get("previousClose") is None:
+                continue
+            if _has_recent_history(candidate):
                 return candidate
+            logger.debug(
+                "%s has a live quote but no usable recent history; treating as unavailable",
+                candidate,
+            )
 
     if checked_at_least_one_exchange:
         raise TickerNotFoundError(

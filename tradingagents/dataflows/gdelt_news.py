@@ -10,7 +10,7 @@ from typing import Optional
 
 import requests
 
-from .company_names import news_search_terms
+from .company_names import news_query_terms
 from .config import get_config
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def _build_ticker_query(ticker: str) -> str:
       news vendor chain, the highest-reach source was returning nothing for
       every Indian ticker and silently falling through to yfinance.
     """
-    terms = news_search_terms(ticker) or (ticker.upper(),)
+    terms = news_query_terms(ticker) or (ticker.upper(),)
     return "(" + " OR ".join(f'"{term}"' for term in terms) + ")"
 
 

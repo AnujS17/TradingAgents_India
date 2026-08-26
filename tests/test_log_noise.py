@@ -51,6 +51,10 @@ def test_ticker_resolution_mutes_yfinance_while_probing():
     resolve_ticker_symbol.cache_clear()
     levels_seen = []
 
+    class FakeHistory:
+        def __init__(self, has_rows):
+            self.empty = not has_rows
+
     class FakeTicker:
         def __init__(self, symbol):
             levels_seen.append(logging.getLogger("yfinance").level)
@@ -59,6 +63,9 @@ def test_ticker_resolution_mutes_yfinance_while_probing():
         @property
         def info(self):
             return {"previousClose": 100.0} if self._symbol.endswith(".NS") else {}
+
+        def history(self, period=None):
+            return FakeHistory(has_rows=self._symbol.endswith(".NS"))
 
     with patch("tradingagents.agents.utils.agent_utils.yf.Ticker", FakeTicker):
         assert resolve_ticker_symbol("BLUEJET", "stock") == "BLUEJET.NS"

@@ -35,7 +35,7 @@ from urllib.parse import quote_plus
 
 import requests
 
-from .company_names import news_search_terms
+from .company_names import news_query_terms
 from .config import get_config
 from .rss import (
     BROWSER_HEADERS,
@@ -62,7 +62,7 @@ def _build_query(ticker: str, start_date: str, end_date: str) -> str:
     because they map exactly onto the vendor interface's explicit start/end
     dates, so the caller's window is honoured instead of approximated.
     """
-    terms = news_search_terms(ticker) or (ticker.upper(),)
+    terms = news_query_terms(ticker) or (ticker.upper(),)
     quoted = " OR ".join(f'"{term}"' for term in terms)
     return f"({quoted}) after:{start_date} before:{end_date}"
 

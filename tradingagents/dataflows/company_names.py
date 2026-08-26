@@ -178,10 +178,18 @@ def company_search_terms(ticker: str) -> tuple[str, ...]:
 
 
 def news_search_terms(ticker: str) -> tuple[str, ...]:
-    """Search terms for news-article queries (GDELT and similar).
+    """Search terms for matching against an already ticker-scoped article set.
+
+    Used by :func:`tradingagents.dataflows.yfinance_news._company_specificity_note`
+    to check which of yfinance's own per-ticker feed results actually name the
+    company. That feed is already scoped to the exact exchange-qualified
+    symbol by Yahoo itself, so a bare-ticker substring match there ("TMPV
+    July sales climb 59%") is a real self-mention, not a collision — unlike
+    an unscoped web search, where the bare ticker is dropped instead (see
+    :func:`news_query_terms`).
 
     Differs from :func:`company_search_terms` in two ways that matter for a
-    keyword news index rather than a social feed:
+    keyword index rather than a social feed:
 
     * **No ``$`` cashtag.** That is a StockTwits/Reddit convention; it does
       not appear in news prose, so it only pads the query.
@@ -198,5 +206,32 @@ def news_search_terms(ticker: str) -> tuple[str, ...]:
         return ()
 
     terms = [base, short_name or full_name]
+    terms.extend(_CURATED_ALIASES.get(base, ()))
+    return _dedupe([t for t in terms if t])
+
+
+def news_query_terms(ticker: str) -> tuple[str, ...]:
+    """Search terms for an unscoped web query (Google News, GDELT, and similar).
+
+    Like :func:`news_search_terms`, but the bare ticker is a fallback, not a
+    standing OR-term: a resolved company name alone already searches well
+    (this module's own docstring: "Laurus Labs" -> 71 articles, no ticker
+    needed), so once a name resolves it is the only term sent. A short or
+    common symbol queried on its own collides with unrelated tickers, names,
+    or pop culture: "HAL" pulled Halliburton (NYSE: HAL) earnings stories
+    and "Lanterns" comic recaps (Hal Jordan) into a Hindustan Aeronautics
+    Limited run, because the OR'd bare ticker matched regardless of the
+    correct name also being in the query -- an unscoped web search has no
+    notion of "this feed is already about the right company" the way
+    yfinance's own per-ticker feed does. The bare ticker is used only when
+    no company name could be resolved at all, so genuinely ticker-only
+    coverage is still found.
+    """
+    base, full_name, short_name = _resolved_parts(ticker)
+    if not base:
+        return ()
+
+    name = short_name or full_name
+    terms = [name] if name else [base]
     terms.extend(_CURATED_ALIASES.get(base, ()))
     return _dedupe([t for t in terms if t])

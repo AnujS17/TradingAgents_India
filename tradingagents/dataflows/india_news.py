@@ -37,6 +37,43 @@ _BROWSER_HEADERS = {
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
+# Substring-matched (case-insensitive, via _filter_articles) against each
+# raw RSS headline/summary in fetch_global_india_news. Deliberately broader
+# than global_news_queries in default_config.py: that list is a SEARCH
+# query, so it must stay short enough for GDELT/Yahoo to actually match a
+# phrase; this is a local filter over an already-fetched, already
+# India-sourced pool, so there's no cost to casting a wide net. Without
+# this, fetch_global_india_news returned the unfiltered top-of-feed dump —
+# whatever these outlets happened to be running that hour, which is exactly
+# as likely to be a company-specific story about an unrelated company (a
+# pharma recall, a telecom licensing dispute) as genuine market/macro
+# context, regardless of the ticker being analysed.
+_MACRO_TERMS = (
+    # Monetary policy
+    "RBI", "repo rate", "reverse repo", "monetary policy", "MPC",
+    "interest rate", "liquidity",
+    # Indices and market structure
+    "Nifty", "Sensex", "Bank Nifty", "BSE", "NSE", "SEBI",
+    "stock market", "equity market", "market cap", "bull market",
+    "bear market", "market rally", "market correction", "volatility",
+    "bond yield", "G-Sec", "index fund",
+    # Institutional flows
+    "FII", "DII", "FPI", "foreign institutional", "domestic institutional",
+    "foreign portfolio", "institutional investors",
+    # Currency and external sector
+    "rupee", "INR", "forex reserves", "current account deficit",
+    "trade deficit", "exchange rate",
+    # Fiscal and regulatory policy
+    "Union Budget", "GST", "fiscal deficit", "disinvestment",
+    "PLI scheme", "RBI intervention",
+    # Macro indicators
+    "inflation", "CPI", "WPI", "GDP", "IIP", "core sector",
+    "manufacturing PMI", "services PMI", "industrial production",
+    # Primary/fund markets
+    "IPO market", "mutual fund", "SIP inflow", "block deal", "bulk deal",
+)
+
+
 def fetch_ticker_india_news(ticker: str, limit: Optional[int] = None) -> str:
     """Fetch supplemental India-market articles relevant to a ticker."""
     config = get_config()
@@ -52,16 +89,55 @@ def fetch_ticker_india_news(ticker: str, limit: Optional[int] = None) -> str:
     )
 
 
+def get_global_news(
+    curr_date: str,
+    look_back_days: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> str:
+    """Vendor-interface wrapper around fetch_global_india_news, registered
+    as the "india_rss" vendor for the get_global_news tool (see
+    dataflows/interface.py's VENDOR_METHODS and default_config.py's
+    tool_vendors.get_global_news).
+
+    Replaces get_global_news_yfinance in the default chain. Diagnosed
+    2026-08-25: get_global_news_yfinance is also in merged_news_vendors
+    (shared with get_news, where merging google_news+yfinance is genuinely
+    useful) -- but for get_global_news specifically, that meant yfinance's
+    merge pass always "succeeded" (returned SOME string) and short-circuited
+    route_to_vendor before GDELT was ever tried, and yfinance's own
+    yf.Search() ignores India-specific query terms and returns generic
+    trending Yahoo Finance content regardless (confirmed live: querying
+    "RBI repo rate" returned Strait-of-Hormuz crude-oil headlines). This
+    fetcher has no such failure mode -- it is the same already-filtered
+    (_MACRO_TERMS) India RSS pool used elsewhere, not a search query that
+    can silently mismatch.
+
+    curr_date/look_back_days are accepted only for interface-shape
+    compatibility with the other vendor get_global_news implementations;
+    India RSS feeds carry no historical window to filter by, so they are
+    unused here -- the same way fetch_global_india_news's own callers
+    already treat it.
+    """
+    return fetch_global_india_news(limit=limit)
+
+
 def fetch_global_india_news(limit: Optional[int] = None) -> str:
-    """Fetch broad India-market news for market-context prompts."""
+    """Fetch India macro/market-context news for market-context prompts.
+
+    Filtered to genuine market/macro coverage (_MACRO_TERMS) rather than
+    the raw top-of-feed dump: this block is meant to be the day's
+    market-wide backdrop, not a second, unfiltered pass at company-specific
+    stories that just happened to be trending on these feeds when fetched.
+    """
     config = get_config()
     if limit is None:
         limit = config.get("global_india_news_article_limit", 10)
     articles = _fetch_articles(config.get("india_news_feeds", []))
+    matches = _filter_articles(articles, _MACRO_TERMS)
     return _format_articles(
-        articles[:limit],
+        matches[:limit],
         "Supplemental Global India News",
-        empty="<no supplemental global India-news RSS articles found>",
+        empty="<no supplemental global India-news RSS articles matched market/macro terms>",
     )
 
 
@@ -178,11 +254,27 @@ def _clean_summary(value: str) -> str:
 
 
 def _filter_articles(articles: Iterable[dict], terms: Iterable[str]) -> list[dict]:
-    lowered_terms = [term.lower() for term in terms if term]
+    """Word-boundary match, not plain substring containment.
+
+    Found live 2026-08-25: _MACRO_TERMS' "NSE" matched inside "immense" (a
+    CSR/PR story about Adani, nothing to do with the exchange), because a
+    3-letter acronym is a substring of plenty of ordinary English words
+    ("immense", "intense", "expense", "license", "response" all contain
+    "nse"). company_search_terms already avoids this class of bug for
+    longer name-derived terms via _MIN_TERM_LENGTH, but the acronyms in
+    _MACRO_TERMS (RBI, NSE, BSE, FII, DII, FPI, CPI, WPI, GDP, IIP, GST,
+    MPC -- all 3 characters) are too short for a length floor to help;
+    they need an actual word boundary instead of a substring check.
+    """
+    patterns = [
+        re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
+        for term in terms
+        if term
+    ]
     matches = []
     for article in articles:
-        haystack = f"{article.get('title', '')} {article.get('summary', '')}".lower()
-        if any(term in haystack for term in lowered_terms):
+        haystack = f"{article.get('title', '')} {article.get('summary', '')}"
+        if any(pattern.search(haystack) for pattern in patterns):
             matches.append(article)
     return matches
 

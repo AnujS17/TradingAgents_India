@@ -5,11 +5,8 @@ sentiment_analyst.py already embed verbatim in their reports (the
 pre-fetched article blocks). These fixtures are copied from the real
 heading shape each vendor's ``_format_articles``/``format_articles``
 emits (tradingagents/dataflows/rss.py, gdelt_news.py, india_news.py,
-finnhub_news.py, yfinance_news.py) so a format drift in any of them is
-caught here, not silently in production. alpha_vantage_news.py is NOT
-in that list: it returns raw unformatted API JSON, not this heading
-shape, so it yields zero citations by design if the vendor fallback
-chain reaches it.
+finnhub_news.py, yfinance_news.py, alpha_vantage_news.py) so a format
+drift in any of them is caught here, not silently in production.
 """
 
 import pytest
@@ -157,6 +154,52 @@ def test_fails_closed_when_no_boundary_heading_is_present():
     reports = Reports(news=_NO_BOUNDARY_HEADING)
 
     assert extract_news_sources(reports) == []
+
+
+_GLOBAL_AND_INDIA_BLOCKS = """## Pre-Fetched Company News Used
+
+## SIEMENS.NS News from Google News, from 2026-07-10 to 2026-08-10
+### Siemens India wins large order from state utility (source: Moneycontrol, 2026-08-08)
+The order covers grid automation equipment across three states.
+Link: https://example.com/siemens-order
+
+## Pre-Fetched Global News Used
+
+## Global Market News from GDELT, from 2026-08-03 to 2026-08-10
+### Oil prices tick back up as war risk reignites (source: Yahoo Finance, 2026-08-09)
+Crude climbed on renewed Middle East tension.
+Link: https://example.com/oil-prices
+
+## Pre-Fetched India-Market News Used
+
+## Supplemental Global India News
+### Sun Pharma's recall of eyedrops: Experts raise concerns (source: Business Line, 2026-08-23)
+Unrelated to Siemens.
+Link: https://example.com/sun-pharma-recall
+
+## Pre-Fetched Exchange Filings Used
+
+No filings.
+
+## News Analyst Report
+
+Siemens posted strong numbers this quarter.
+"""
+
+
+@pytest.mark.unit
+def test_global_and_india_market_sections_are_excluded_from_news_report():
+    """The whole point: these sections are ticker-agnostic market/macro
+    backdrop, given to the model but not evidence about the company being
+    analysed, so they must never surface as a "source" for this run."""
+    reports = Reports(news=_GLOBAL_AND_INDIA_BLOCKS)
+
+    sources = extract_news_sources(reports)
+
+    assert len(sources) == 1
+    assert sources[0].title == "Siemens India wins large order from state utility"
+    assert all("Oil prices" not in s.title for s in sources)
+    assert all("Sun Pharma" not in s.title for s in sources)
 
 
 @pytest.mark.unit

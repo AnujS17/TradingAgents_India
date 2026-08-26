@@ -15,6 +15,7 @@ import pytest
 from tradingagents.dataflows.company_names import (
     clear_caches,
     company_search_terms,
+    news_query_terms,
     news_search_terms,
 )
 from tradingagents.dataflows.gdelt_news import _build_ticker_query
@@ -44,9 +45,12 @@ def test_query_no_longer_contains_exchange_suffix(stub_name):
 
 
 @pytest.mark.unit
-def test_query_searches_company_name_and_ticker(stub_name):
+def test_query_searches_company_name_only_when_resolved(stub_name):
+    # The bare ticker is a fallback, not a standing OR-term (see
+    # test_news_terms_drop_bare_ticker_once_a_name_resolves below for why):
+    # once a name resolves, it is the only term sent.
     stub_name("Laurus Labs Limited")
-    assert _build_ticker_query("LAURUSLABS.BO") == '("LAURUSLABS" OR "Laurus Labs")'
+    assert _build_ticker_query("LAURUSLABS.BO") == '("Laurus Labs")'
 
 
 @pytest.mark.unit
@@ -102,3 +106,40 @@ def test_news_terms_keep_curated_aliases(stub_name):
 
     assert "RIL" in terms
     assert "Reliance Industries" in terms
+
+
+@pytest.mark.unit
+def test_query_terms_drop_bare_ticker_once_a_name_resolves(stub_name):
+    # The actual bug: "HAL" is Halliburton's NYSE ticker AND the DC Comics
+    # character (Hal Jordan). OR'd in unconditionally alongside "Hindustan
+    # Aeronautics", it pulled Halliburton earnings stories and "Lanterns"
+    # recaps into a Hindustan Aeronautics Limited run's news/sources. This is
+    # news_query_terms specifically -- an unscoped web search -- not
+    # news_search_terms, which still keeps the bare ticker for matching
+    # against yfinance's already ticker-scoped per-symbol feed.
+    stub_name("Hindustan Aeronautics Limited")
+    terms = news_query_terms("HAL.NS")
+
+    assert "HAL" not in terms
+    assert "Hindustan Aeronautics" in terms
+
+
+@pytest.mark.unit
+def test_query_terms_fall_back_to_bare_ticker_when_name_unresolvable(stub_name):
+    # No name at all is the one case the bare ticker must still cover --
+    # some outlets write only the symbol, and there is nothing else to search.
+    stub_name("")
+    terms = news_query_terms("LAURUSLABS.BO")
+
+    assert terms == ("LAURUSLABS",)
+
+
+@pytest.mark.unit
+def test_search_terms_keep_bare_ticker_for_the_scoped_specificity_check(stub_name):
+    # news_search_terms (yfinance's already ticker-scoped feed) must NOT
+    # change -- _company_specificity_note relies on the bare ticker matching
+    # real self-mentions like "TMPV July sales climb 59%".
+    stub_name("Hindustan Aeronautics Limited")
+    terms = news_search_terms("HAL.NS")
+
+    assert "HAL" in terms

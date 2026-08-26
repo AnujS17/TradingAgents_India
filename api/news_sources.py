@@ -7,6 +7,13 @@ Used" headings each one writes. That text is already saved to the
 database on every completed run. This module only recovers structure
 from data already proven to have been given to the model; it never
 invents a source and never scans the model's own prose.
+
+Scoped to company-specific evidence only. news_report also embeds a
+ticker-agnostic "Pre-Fetched Global News Used" section (and, after it,
+India-market and exchange-filing sections) — real input the model saw, but
+market/macro backdrop rather than evidence about the company being
+analysed, so it is excluded here even though it was "actually given" in
+the literal sense (see _prefetched_text).
 """
 
 from __future__ import annotations
@@ -21,12 +28,13 @@ from api.schemas import NewsSource, Reports
 # Confirmed producers: tradingagents/dataflows/rss.py::format_articles
 # (google_news), gdelt_news.py and india_news.py (each with a local
 # ``_format_articles``, byte-identical shape), finnhub_news.py (local
-# ``_format_articles``), and yfinance_news.py (inline, no date in heading).
-# alpha_vantage_news.py does NOT match this shape — it returns the raw,
-# unformatted vendor API response, not a "### heading" block. If the vendor
-# fallback chain ever reaches it, this parser correctly yields zero
-# citations for that text; that is accepted degradation (see
-# extract_news_sources's docstring), not a bug to fix here.
+# ``_format_articles``), yfinance_news.py (inline, no date in heading), and
+# alpha_vantage_news.py (local ``_format_articles``, added 2026-08-25 when
+# alpha_vantage was promoted to the primary get_global_news vendor -- it
+# used to return NEWS_SENTIMENT's raw JSON verbatim instead of this shape,
+# which this parser correctly yielded zero citations for; not an issue
+# while that vendor was rarely reached, but a real gap once it was
+# actually in the loop).
 _ARTICLE_HEADING = re.compile(
     r"^### (?P<title>.+?) \(source: (?P<source>[^,)]+)(?:, (?P<date>[^)]+))?\)\s*$"
 )
@@ -47,6 +55,17 @@ _PREFETCHED_SECTION_END = re.compile(
     r"^## (?:News|Sentiment) Analyst Report\s*$", re.MULTILINE
 )
 
+# news_report also embeds a "Pre-Fetched Global News Used" section (and,
+# after it, "Pre-Fetched India-Market News Used" / "...Exchange Filings
+# Used") before the boundary above -- ticker-agnostic market/macro
+# backdrop, not evidence about the specific company being analysed. Only
+# sentiment_analyst.py has no such heading (its own pre-fetched blocks —
+# StockTwits, Reddit, ticker-filtered India news — are already
+# company-scoped), so this only ever truncates news_report.
+_NEWS_GLOBAL_SECTION_START = re.compile(
+    r"^## Pre-Fetched Global News Used\s*$", re.MULTILINE
+)
+
 # What the "date" capture group of _ARTICLE_HEADING looks like when it is
 # actually a date: either the real formatters' "%Y-%m-%d" output, or their
 # literal "date unknown" fallback (rss.py/finnhub_news.py/gdelt_news.py/
@@ -58,16 +77,26 @@ _DATE_SHAPE = re.compile(r"^\d{4}-\d{2}-\d{2}$|^date unknown$", re.IGNORECASE)
 
 
 def _prefetched_text(raw: str) -> str:
-    """Text between the start of the report and the analyst's own prose.
+    """Text between the start of the report and the analyst's own prose,
+    further narrowed to company-specific pre-fetched data only.
 
     Every report ever persisted has the boundary heading (verified via git
     history), but that is an accident of what has existed so far, not a
     structural guarantee. Fail closed: if the boundary is missing, treat
     NONE of the text as pre-fetched data rather than risk scanning the
     model's own prose for "### ..." look-alikes.
+
+    Within that span, news_report also carries global/macro sections that
+    are given to the model but are not evidence about the specific company
+    — truncate there too when present (see _NEWS_GLOBAL_SECTION_START).
     """
-    match = _PREFETCHED_SECTION_END.search(raw)
-    return raw[: match.start()] if match else ""
+    end_match = _PREFETCHED_SECTION_END.search(raw)
+    if end_match is None:
+        return ""
+    prefetched = raw[: end_match.start()]
+
+    global_match = _NEWS_GLOBAL_SECTION_START.search(prefetched)
+    return prefetched[: global_match.start()] if global_match else prefetched
 
 
 def _split_source_and_date(source: str, date: str | None) -> tuple[str, str | None]:
