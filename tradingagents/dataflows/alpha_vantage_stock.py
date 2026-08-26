@@ -7,8 +7,7 @@ def get_stock(
     end_date: str
 ) -> str:
     """
-    Returns raw daily OHLCV values, adjusted close values, and historical split/dividend events
-    filtered to the specified date range.
+    Returns raw daily OHLCV values filtered to the specified date range.
 
     Args:
         symbol: The name of the equity. For example: symbol=IBM
@@ -16,7 +15,7 @@ def get_stock(
         end_date: End date in yyyy-mm-dd format
 
     Returns:
-        CSV string containing the daily adjusted time series data filtered to the date range.
+        CSV string containing the daily time series data filtered to the date range.
     """
     # Parse dates to determine the range
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -33,6 +32,17 @@ def get_stock(
         "datatype": "csv",
     }
 
-    response = _make_api_request("TIME_SERIES_DAILY_ADJUSTED", params)
+    # TIME_SERIES_DAILY, not TIME_SERIES_DAILY_ADJUSTED: the adjusted
+    # variant is gated behind Alpha Vantage's premium tier -- confirmed
+    # live (2026-08-25), a free key gets back an "Information: this is a
+    # premium endpoint" body instead of any stock data, meaning every
+    # caller of this function (including get_stock_data's own
+    # alpha_vantage vendor in dataflows/interface.py) was silently
+    # non-functional. This is unadjusted (no split/dividend adjustment),
+    # unlike yfinance's own auto_adjust=True history elsewhere in this
+    # codebase -- a real but minor precision gap, and one that only
+    # matters when this endpoint is actually reached (a yfinance outage),
+    # for a name with a very recent split.
+    response = _make_api_request("TIME_SERIES_DAILY", params)
 
     return _filter_csv_by_date_range(response, start_date, end_date)

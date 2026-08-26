@@ -1,5 +1,6 @@
 import time
 import logging
+from io import StringIO
 
 import pandas as pd
 import yfinance as yf
@@ -119,6 +120,80 @@ def _cache_is_valid(data_file: str) -> bool:
         return False
 
 
+# yfinance's own suffix convention (.NS/.BO) has no Alpha Vantage
+# equivalent -- Alpha Vantage's global-equity coverage for NSE/BSE names
+# is BSE-only, under a single ".BSE" suffix (confirmed live: querying
+# "APOLLOHOSP.NS" against TIME_SERIES_DAILY returns nothing; "APOLLOHOSP.BSE"
+# returns real current data). Both yfinance suffixes map to it.
+_YFINANCE_TO_ALPHA_VANTAGE_SUFFIX = {".NS": ".BSE", ".BO": ".BSE"}
+
+
+def _to_alpha_vantage_symbol(symbol: str) -> str | None:
+    """Convert a yfinance-suffixed symbol to Alpha Vantage's form, or None
+    if this symbol has no known Alpha Vantage equivalent (anything not
+    NSE/BSE-suffixed -- the fallback below only ever applies to Indian
+    equities, the same scope resolve_ticker_symbol resolves)."""
+    for yf_suffix, av_suffix in _YFINANCE_TO_ALPHA_VANTAGE_SUFFIX.items():
+        if symbol.endswith(yf_suffix):
+            return symbol[: -len(yf_suffix)] + av_suffix
+    return None
+
+
+def _load_ohlcv_from_alpha_vantage(symbol: str, start_str: str, end_str: str) -> "pd.DataFrame | None":
+    """Fallback OHLCV source for when yfinance fails outright (empty
+    download, a 401/blocked response, or any other total miss -- see
+    load_ohlcv's caller). APOLLOHOSP.NS, 2026-08-25: yfinance returned a
+    401 "User is unable to access this feature" followed by "possibly
+    delisted", the deterministic Verified Market Snapshot failed
+    entirely, and the Market Analyst had to reconstruct a technical read
+    through its own get_stock_data tool call instead -- costing an 8-minute
+    gap in the run while that recovery happened. This gives the snapshot
+    itself the same fallback get_stock_data already had (route_to_vendor's
+    alpha_vantage vendor), so a yfinance outage degrades in seconds, not
+    minutes, and the "source of truth" snapshot the prompts tell every
+    analyst to trust doesn't stay silently broken while a side-channel
+    tool call quietly does the real work.
+
+    Returns None (never raises) for anything this fallback can't help
+    with -- an unconvertible symbol, a request error, an empty or
+    malformed response -- so the caller falls through to its own "no
+    data" error instead of masking it with an unrelated Alpha Vantage
+    traceback.
+    """
+    av_symbol = _to_alpha_vantage_symbol(symbol)
+    if av_symbol is None:
+        return None
+
+    from .alpha_vantage_stock import get_stock
+
+    try:
+        csv_text = get_stock(av_symbol, start_str, end_str)
+        parsed = pd.read_csv(StringIO(csv_text))
+    except Exception as exc:  # noqa: BLE001 — any failure here just means "no fallback available"
+        logger.debug("Alpha Vantage OHLCV fallback failed for %s (%s): %s", symbol, av_symbol, exc)
+        return None
+
+    required = {"timestamp", "open", "high", "low", "close", "volume"}
+    if not required.issubset(parsed.columns) or parsed.empty:
+        logger.debug(
+            "Alpha Vantage OHLCV fallback for %s (%s) returned no usable rows",
+            symbol, av_symbol,
+        )
+        return None
+
+    parsed = parsed.rename(columns={
+        "timestamp": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    })
+    parsed["Date"] = pd.to_datetime(parsed["Date"])
+    parsed = parsed.sort_values("Date").set_index("Date")
+    return parsed[["Open", "High", "Low", "Close", "Volume"]]
+
+
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
@@ -165,10 +240,18 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
         ))
 
         if raw is None or raw.empty:
-            raise ValueError(
-                f"yfinance returned no data for '{symbol}' "
-                f"({start_str} – {end_str}). Check the ticker symbol and network."
-            )
+            fallback = _load_ohlcv_from_alpha_vantage(symbol, start_str, end_str)
+            if fallback is not None and not fallback.empty:
+                logger.warning(
+                    "yfinance returned no data for %s; recovered via Alpha Vantage fallback",
+                    symbol,
+                )
+                raw = fallback
+            else:
+                raise ValueError(
+                    f"yfinance returned no data for '{symbol}' "
+                    f"({start_str} – {end_str}). Check the ticker symbol and network."
+                )
 
         # Force index.name = "Date" before reset_index() so that the resulting
         # column is always called 'Date' regardless of yfinance version.

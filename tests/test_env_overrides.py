@@ -24,7 +24,7 @@ def test_no_env_uses_built_in_defaults(monkeypatch):
     assert dc.DEFAULT_CONFIG["deep_think_llm"] == "deepseek-v4-flash"
     assert dc.DEFAULT_CONFIG["quick_think_llm"] == "deepseek-v4-flash"
     assert dc.DEFAULT_CONFIG["backend_url"] is None
-    assert dc.DEFAULT_CONFIG["openrouter_reasoning_effort"] == "xhigh"
+    assert dc.DEFAULT_CONFIG["openrouter_reasoning_effort"] == "low"
     assert dc.DEFAULT_CONFIG["openrouter_max_completion_tokens"] == 8192
     assert dc.DEFAULT_CONFIG["max_debate_rounds"] == 2
     assert dc.DEFAULT_CONFIG["checkpoint_enabled"] is False

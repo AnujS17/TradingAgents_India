@@ -19,6 +19,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_LLM_TEMPERATURE":      "llm_temperature",
     "TRADINGAGENTS_LLM_SEED":             "llm_seed",
+    "TRADINGAGENTS_LLM_TIMEOUT_SECONDS":  "llm_timeout_seconds",
 }
 
 
@@ -49,16 +50,32 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "memory_log_max_entries": None,
 
     # LLM settings
-    "llm_provider": "deepseek",
-    "deep_think_llm": "deepseek-v4-flash",
-    "quick_think_llm": "deepseek-v4-flash",
+    "llm_provider": "openrouter",
+    # Swapped to test openai/gpt-5.6-luna (2026-08-25). Not in
+    # capabilities.py's DeepSeek/MiniMax-specific tables, so it falls to
+    # _DEFAULT there (tool_choice/json_mode/json_schema all True,
+    # function-calling) -- a real API call is the actual validation, this
+    # is just confirming nothing hard-blocks an unlisted model. Revert to
+    # "deepseek/deepseek-v4-flash-0731" (both keys) to go back.
+    "deep_think_llm": "deepseek/deepseek-v4-flash-0731",
+    "quick_think_llm": "deepseek/deepseek-v4-flash-0731",
     "backend_url": None,
 
     # Provider-specific thinking configuration
     "google_thinking_level": None,
     "openai_reasoning_effort": None,
     "anthropic_effort": None,
-    "openrouter_reasoning_effort": "xhigh",
+    # Lowered from "xhigh" (2026-08-25) to test the fastest possible run
+    # time: xhigh's per-call latency is highly variable under real provider
+    # load (BDL run, same day: one single call took 6m51s), which is most
+    # of why a "fast" (~4 min estimate) run took 14 min. "low" is the
+    # lowest tier every OpenRouter reasoning-capable model recognises
+    # (unlike "minimal", which not every model/provider combination
+    # supports) -- applies to both deep_think_llm and quick_think_llm,
+    # since both share this same _get_provider_kwargs() output. Revert to
+    # "xhigh" (or try "medium"/"high" in between) if this trades away too
+    # much analysis quality for the speed.
+    "openrouter_reasoning_effort": "high",
     "openrouter_max_completion_tokens": 8192,
     "openrouter_temperature": 0.2,
     "openrouter_top_p": 0.9,
@@ -82,6 +99,27 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "llm_temperature": 0.2,
     "llm_seed": 42,
 
+    # Per-request ceiling on every LLM call, applied to every provider by
+    # TradingAgentsGraph._get_provider_kwargs (all provider clients accept
+    # a `timeout` passthrough kwarg -- see llm_clients/*.py). Previously
+    # unset, so a single call had no upper bound: one non-streaming
+    # structured-output call (Research Manager/Trader/Portfolio Manager,
+    # via invoke_structured_or_freetext) sat waiting on the provider for
+    # 5m29s on 2026-08-24, and cooperative cancellation (should_stop, see
+    # propagate_streaming) only gets a chance to run between the graph's
+    # own streamed chunks -- a non-streaming call that never returns means
+    # neither a chunk nor a checkpoint. Set None to restore no timeout.
+    #
+    # First set to 30 (2026-08-25), which turned out too tight:
+    # openrouter_reasoning_effort defaults to "xhigh" below, and an xhigh
+    # response can legitimately take well over 30s to produce its first
+    # byte (reasoning happens before content streams) -- HINDALCO 2026-08-25
+    # failed a real, working run after 2m38s of retries hitting that
+    # ceiling on ordinary responses, not a hang. 90s gives real xhigh calls
+    # room to finish while still catching a genuinely stuck call (the
+    # original incident) many times over.
+    "llm_timeout_seconds": 90,
+
     # Freeze fetched news/social/filings per (ticker, analysis date) so a
     # re-run replays identical inputs. See dataflows/snapshot_cache.py for the
     # measurement that motivated it. Set False (or pass --refresh) to pull
@@ -100,7 +138,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
 
     # News / data fetching parameters
     "news_article_limit": 30,
-    "global_news_article_limit": 20,
+    # Lowered from 20 (2026-08-25): the get_global_news vendor below
+    # (yfinance) can return generic, not-India-specific trending content
+    # when its query doesn't match well (see tool_vendors.get_global_news
+    # comment) -- a small cap bounds how much of that can dilute the
+    # prompt, without pretending the content itself is filtered.
+    "global_news_article_limit": 5,
     "global_news_lookback_days": 7,
 
     # Hard ceiling on tokens the model may GENERATE per call. None = no cap
@@ -199,16 +242,50 @@ DEFAULT_CONFIG = _apply_env_overrides({
 
     # -----------------------------------------------------------------------
     # India-market focused global news queries.
-    # These target the macro and structural drivers that move Indian
-    # equities: RBI policy/rate cycle, Nifty/Sensex-level flows, INR moves,
-    # FII/DII positioning, and Budget/GST/regulatory catalysts.
+    #
+    # Short, real phrases -- not descriptive sentences. GDELT ORs every entry
+    # here into ONE query as an exact quoted phrase; a 6-9 word descriptive
+    # phrase like the old "RBI monetary policy repo rate India interest
+    # rates" essentially never appears verbatim in prose, so GDELT returned
+    # nothing and the vendor chain fell through to Yahoo's fuzzy search,
+    # which -- with no good match for that wording either -- degraded to
+    # generic trending Yahoo Finance content (oil, the dollar, gas prices),
+    # none of it India-specific. Every phrase below is 2-4 words, the way
+    # Indian financial media actually writes it, so it has a real chance of
+    # matching an actual headline instead of silently degrading.
+    #
+    # Covers the structural drivers that move Indian equities: RBI policy/
+    # rate cycle, index-level moves, FII/DII positioning, the rupee, fiscal
+    # policy, and the macro indicators (inflation, GDP, PMI) that set the
+    # backdrop for all of them.
     # -----------------------------------------------------------------------
+    # Capped around 20: GDELT ORs every entry into one query, and past ~20-25
+    # clauses a DOC API query risks the same "too complex" rejection the
+    # OR-parenthesization fix (see gdelt_news.py) was already written to
+    # avoid; yfinance walks this same list one query per entry as its own
+    # fallback, so an unbounded list also means an unbounded worst-case
+    # number of sequential search calls there.
       "global_news_queries": [
-        "RBI monetary policy repo rate India interest rates",
-        "Nifty Sensex index rally correction FII selling",
-        "rupee INR depreciation exchange rate RBI intervention",
-        "FII DII flows Indian equities institutional buying selling",
-        "Union Budget GST regulatory reform India economy",
+        "RBI repo rate",
+        "RBI monetary policy",
+        "Nifty 50",
+        "Sensex",
+        "Bank Nifty",
+        "FII outflows",
+        "DII buying",
+        "foreign portfolio investors India",
+        "rupee depreciation",
+        "forex reserves India",
+        "Union Budget India",
+        "GST reform",
+        "fiscal deficit India",
+        "India inflation CPI",
+        "India GDP growth",
+        "manufacturing PMI India",
+        "India trade deficit",
+        "SEBI regulation",
+        "mutual fund inflows India",
+        "India IPO market",
     ],
 
     # -----------------------------------------------------------------------
@@ -302,8 +379,44 @@ DEFAULT_CONFIG = _apply_env_overrides({
     },
 
     # Tool-level overrides (takes precedence over category-level above)
+    #
+    # get_global_news -- history, 2026-08-25, two iterations:
+    #
+    # 1. Originally "gdelt,yfinance,alpha_vantage,finnhub", with yfinance
+    #    also in merged_news_vendors below (fine for get_news, where
+    #    merging google_news+yfinance is genuinely additive). For
+    #    get_global_news specifically that meant route_to_vendor's merge
+    #    pass called ONLY yfinance (the sole chain entry intersecting
+    #    merged_news_vendors), always "succeeded" (yf.Search() never
+    #    errors, it just returns SOMETHING), and returned immediately --
+    #    GDELT, first in the chain, was never actually attempted in a real
+    #    run despite appearing to be.
+    # 2. Swapped yfinance for india_rss (the India RSS pool, already
+    #    filtered by india_news.py's _MACRO_TERMS) to fix that and to stop
+    #    yf.Search()'s generic trending content (confirmed live: querying
+    #    "RBI repo rate" still returned Strait-of-Hormuz crude-oil
+    #    headlines) from reaching the prompt. This worked, but GDELT is
+    #    also just rate-limited in practice right now, so it fell straight
+    #    to india_rss -- which duplicated news_analyst.py's OWN separate
+    #    fetch_global_india_news() call verbatim, wasting prompt tokens on
+    #    two copies of the same block under different headings.
+    #
+    # 3. alpha_vantage promoted to primary (2026-08-25): its NEWS_SENTIMENT
+    #    endpoint is purpose-built for exactly this ("global market news &
+    #    sentiment... financial markets, economy, M&A, IPOs" -- see its own
+    #    docstring in alpha_vantage_news.py), unlike yfinance's Search,
+    #    which ignores whatever query it's given. It was already wired in
+    #    as the SECOND fallback the whole time, but yfinance (first) never
+    #    errors -- it always returns some string -- so alpha_vantage was
+    #    never actually reached either, same shape of problem as GDELT
+    #    before it. Not in merged_news_vendors, so no merge-bypass risk in
+    #    either position. Its free tier is capped (25 requests/day,
+    #    documented in the technical_indicators comment above) --
+    #    AlphaVantageRateLimitError is caught explicitly by
+    #    interface._invoke_vendor and falls through to yfinance, so
+    #    exhausting it degrades rather than breaks a run.
     "tool_vendors": {
-        "get_global_news": "gdelt,yfinance,alpha_vantage,finnhub",
+        "get_global_news": "alpha_vantage,yfinance,finnhub",
     },
 
     # Benchmark — SPY is the fallback for tickers with no exchange suffix.
