@@ -59,7 +59,17 @@ export function RunView({
                 completed-only block, matching TheCall/RunHistoryPanel/
                 ReportsRecord below. */}
             <TheDesk />
-            <div>
+            {/* min-w-0: this <div> and TheDesk's own <aside> are grid items
+                one level below the `main > * { min-width: 0 }` rule in
+                globals.css (that rule only reaches this grid wrapper itself,
+                a direct child of <main> — not these two, its grandchildren).
+                Without it, grid's default min-width:auto lets a long word
+                (an agent name in TheDesk, a report body in ReportsRecord)
+                force this column wider than its track, overflowing the
+                viewport below lg where there's no explicit column width to
+                clip against. Found verifying the 2026-08-23 rating-color
+                work at 380px; pre-existing, unrelated to that change. */}
+            <div className="min-w-0">
               <TheCall verdict={current.verdict ?? null} />
               <RunHistoryPanel
                 runCount={current.run_count}
@@ -67,7 +77,7 @@ export function RunView({
                 history={historyQuery.data ?? null}
                 isError={historyQuery.isError}
               />
-              <ReportsRecord reports={current.reports ?? null} />
+              <ReportsRecord reports={current.reports ?? null} verdict={current.verdict ?? null} />
               <SourcesPanel sources={current.news_sources ?? []} />
             </div>
           </div>
