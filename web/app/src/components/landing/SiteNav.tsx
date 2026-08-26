@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 // Ported verbatim from web/design/landing-fintech/index.html lines 443-463.
 // Static — no data, no client state, so this stays a server component.
 export function SiteNav() {
@@ -30,6 +32,9 @@ export function SiteNav() {
           <a href="#faq" className="transition hover:opacity-75 hover:text-white">
             FAQ
           </a>
+          <Link href="/runs" className="transition hover:opacity-75 hover:text-white">
+            Saved runs
+          </Link>
         </nav>
         {/* Anchors to the hero's SearchForm wrapper (id="try" — see Hero.tsx). */}
         <a

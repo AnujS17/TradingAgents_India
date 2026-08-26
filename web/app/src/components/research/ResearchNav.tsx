@@ -25,6 +25,12 @@ export function ResearchNav({ profile }: { profile: AnalysisProfile }) {
           Bench
         </Link>
         <SearchForm variant="nav" />
+        <Link
+          href="/runs"
+          className="hidden sm:block text-xs font-tight font-bold text-white/60 hover:text-white transition-colors shrink-0"
+        >
+          Saved runs
+        </Link>
         <span className="hidden sm:block text-xs font-tight font-bold text-white/50 shrink-0">
           {PROFILE_LABELS[profile]}
         </span>
