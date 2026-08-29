@@ -21,11 +21,13 @@ from api.ratelimit import client_identity, enforce_budget
 from api.schemas import (
     AnalysisProfile,
     AnalysisRequest,
+    PushSubscribeRequest,
     RunAccepted,
     RunDetail,
     RunHistory,
     RunStatus,
     RunSummary,
+    VapidPublicKey,
 )
 
 router = APIRouter()
@@ -36,6 +38,17 @@ _ESTIMATED_SECONDS = {
     AnalysisProfile.FAST: 240,
     AnalysisProfile.DETAILED: 840,
 }
+
+
+@router.get("/push/vapid-public-key", response_model=VapidPublicKey, tags=["runs"])
+async def get_vapid_public_key() -> VapidPublicKey:
+    """The public half of this server's VAPID keypair, for the browser's
+    PushManager.subscribe call. Not a secret -- every subscribing browser
+    needs it, and it's meaningless without the private key this server
+    alone holds."""
+    from api.push import public_key_b64
+
+    return VapidPublicKey(key=public_key_b64())
 
 
 @router.post(
@@ -165,6 +178,40 @@ async def resume_run(
     )
 
 
+@router.post(
+    "/runs/{run_id}/subscribe",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["runs"],
+)
+async def subscribe_to_run(
+    run_id: str, payload: PushSubscribeRequest, store: RunStoreDep
+) -> None:
+    """Register a browser push subscription for one run's completion.
+
+    No accounts, so this is scoped to the run, not a person: whoever has
+    this run's page open and grants notification permission gets notified
+    when it reaches a terminal state, from whichever browser/device they
+    used to subscribe. api.worker sends to every subscription stored here
+    and clears them once used (or attempted).
+
+    404 for an already-finished run: subscribing to something that will
+    never transition again is a caller bug, not a valid no-op state to
+    silently accept -- better to fail loudly than let a client believe a
+    notification is coming that never will.
+    """
+    run = await store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
+        raise HTTPException(
+            status_code=404, detail="Run has already finished; nothing left to notify about"
+        )
+
+    await store.add_push_subscription(
+        run_id, payload.endpoint, payload.keys.p256dh, payload.keys.auth
+    )
+
+
 @router.get(
     "/runs/{ticker}/{analysis_date}/history",
     response_model=RunHistory,
@@ -231,6 +278,64 @@ async def stream_run(run_id: str, store: RunStoreDep, request: Request) -> Strea
             await asyncio.sleep(0.4)
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
+def _export_filename(run: RunDetail, extension: str) -> str:
+    # Same slug shape for both formats; analysis_date is already a plain
+    # YYYY-MM-DD, safe as a filename component with no further escaping.
+    return f"{run.ticker}_{run.analysis_date}.{extension}"
+
+
+@router.get("/runs/{run_id}/export.pdf", tags=["runs"])
+async def export_run_pdf(run_id: str, store: RunStoreDep) -> Response:
+    """A one-page-plus PDF: the verdict card's fields, then every available
+    report grouped the same way ReportsRecord.tsx groups them on screen.
+
+    404, not an empty/partial file, for a run with nothing to export yet --
+    same reasoning as POST /runs/{id}/resume's 404 for a run that hasn't
+    failed: better to fail loudly than hand back a file that looks legitimate
+    but is missing the one thing (a verdict) the export exists to capture.
+
+    Registered here, above /runs/{ticker}/{analysis_date}, for the same
+    reason stream_run is (see its docstring): both are two-segment GET
+    paths under /runs, and route order decides which one FastAPI tries
+    first.
+    """
+    from api.export import build_pdf
+
+    run = await store.get(run_id)
+    if run is None or run.status != RunStatus.COMPLETED:
+        raise HTTPException(
+            status_code=404, detail="Run not found, or it has not completed yet"
+        )
+    pdf_bytes = build_pdf(run)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_export_filename(run, "pdf")}"'},
+    )
+
+
+@router.get("/runs/{run_id}/export.xlsx", tags=["runs"])
+async def export_run_excel(run_id: str, store: RunStoreDep) -> Response:
+    """A Summary sheet (the verdict card's fields) plus a Full reports sheet
+    (one row per available report: group, label, word count, content).
+
+    Same 404 contract and route-ordering reason as export_run_pdf above.
+    """
+    from api.export import build_excel
+
+    run = await store.get(run_id)
+    if run is None or run.status != RunStatus.COMPLETED:
+        raise HTTPException(
+            status_code=404, detail="Run not found, or it has not completed yet"
+        )
+    xlsx_bytes = build_excel(run)
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{_export_filename(run, "xlsx")}"'},
+    )
 
 
 @router.get(
