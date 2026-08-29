@@ -44,6 +44,7 @@ def _to_detail(row: Run) -> RunDetail:
         reports=reports,
         news_sources=extract_news_sources(reports) if reports else [],
         requested_time_horizon=row.requested_time_horizon,
+        user_id=row.user_id,
     )
 
 
@@ -73,24 +74,32 @@ class SqlRunStore:
         self._sessionmaker = sessionmaker or get_sessionmaker()
 
     async def _siblings(
-        self, session, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self,
+        session,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None = None,
     ) -> list[Run]:
         """Every completed-or-in-flight run for one question, newest first.
 
         Failed and cancelled runs are excluded everywhere: neither produced
         a real answer, so neither should inflate the run count a user sees
         or poison a ticker's comparison history for the rest of the day.
+
+        ``owner`` defaults to ``None`` (no filter) so ``get``'s existing
+        call site -- which has already fetched one specific row by id and
+        leaves access control to the router -- keeps working unchanged.
         """
-        result = await session.execute(
-            select(Run)
-            .where(
-                Run.ticker == ticker,
-                Run.analysis_date == analysis_date,
-                Run.profile == profile.value,
-                Run.status.not_in([RunStatus.FAILED.value, RunStatus.CANCELLED.value]),
-            )
-            .order_by(Run.created_at.desc(), Run.id.desc())
+        stmt = select(Run).where(
+            Run.ticker == ticker,
+            Run.analysis_date == analysis_date,
+            Run.profile == profile.value,
+            Run.status.not_in([RunStatus.FAILED.value, RunStatus.CANCELLED.value]),
         )
+        if owner is not None:
+            stmt = stmt.where(Run.user_id == owner)
+        result = await session.execute(stmt.order_by(Run.created_at.desc(), Run.id.desc()))
         return list(result.scalars())
 
     async def create(
@@ -102,6 +111,7 @@ class SqlRunStore:
         requested_by: str | None = None,
         time_horizon: str | None = None,
         resume: bool = False,
+        owner: str | None = None,
     ) -> RunDetail:
         async with self._sessionmaker() as session:
             row = Run(
@@ -115,6 +125,7 @@ class SqlRunStore:
                 requested_by=requested_by,
                 requested_time_horizon=time_horizon,
                 resume=resume,
+                user_id=owner,
             )
             session.add(row)
             await session.commit()
@@ -173,12 +184,12 @@ class SqlRunStore:
             )
 
     async def find(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunDetail | None:
         """Newest usable run, preferring a finished one — a caller asking this
         question wants an answer now, and an in-flight run surfaces later."""
         async with self._sessionmaker() as session:
-            siblings = await self._siblings(session, ticker, analysis_date, profile)
+            siblings = await self._siblings(session, ticker, analysis_date, profile, owner)
             if not siblings:
                 return None
             completed = [r for r in siblings if r.status == RunStatus.COMPLETED.value]
@@ -192,10 +203,10 @@ class SqlRunStore:
             )
 
     async def history(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunHistory | None:
         async with self._sessionmaker() as session:
-            siblings = await self._siblings(session, ticker, analysis_date, profile)
+            siblings = await self._siblings(session, ticker, analysis_date, profile, owner)
             if not siblings:
                 return None
             return RunHistory(
@@ -212,12 +223,14 @@ class SqlRunStore:
             )
 
     async def list(
-        self, ticker: str | None, limit: int, offset: int
+        self, ticker: str | None, limit: int, offset: int, owner: str | None
     ) -> list[RunSummary]:
         async with self._sessionmaker() as session:
             stmt = select(Run)
             if ticker is not None:
                 stmt = stmt.where(Run.ticker == ticker)
+            if owner is not None:
+                stmt = stmt.where(Run.user_id == owner)
             # id as tiebreak so pagination is deterministic when timestamps
             # collide.
             stmt = stmt.order_by(Run.created_at.desc(), Run.id.desc()).limit(limit).offset(offset)

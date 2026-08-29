@@ -41,6 +41,7 @@ class RunStore(Protocol):
         refresh_data: bool = False,
         requested_by: str | None = None,
         time_horizon: str | None = None,
+        owner: str | None = None,
     ) -> RunDetail: ...
 
     async def create_resume(
@@ -50,17 +51,17 @@ class RunStore(Protocol):
     async def get(self, run_id: str) -> RunDetail | None: ...
 
     async def find(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunDetail | None: ...
 
     async def history(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunHistory | None: ...
 
     async def count_runs_today(self, requested_by: str | None = None) -> int: ...
 
     async def list(
-        self, ticker: str | None, limit: int, offset: int
+        self, ticker: str | None, limit: int, offset: int, owner: str | None
     ) -> list[RunSummary]: ...
 
     async def request_stop(self, run_id: str) -> RunDetail | None: ...
@@ -127,6 +128,7 @@ class InMemoryRunStore:
         refresh_data: bool = False,
         requested_by: str | None = None,
         time_horizon: str | None = None,
+        owner: str | None = None,
     ) -> RunDetail:
         run = RunDetail(
             id=new_run_id(),
@@ -136,6 +138,7 @@ class InMemoryRunStore:
             status=RunStatus.QUEUED,
             created_at=datetime.now(timezone.utc),
             requested_time_horizon=time_horizon,
+            user_id=owner,
         )
         self._runs[run.id] = run
         return run
@@ -171,7 +174,7 @@ class InMemoryRunStore:
         )
 
     async def find(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunDetail | None:
         """Newest usable run, preferring a finished one.
 
@@ -179,7 +182,11 @@ class InMemoryRunStore:
         wants an answer now, and the run still executing will surface on its
         own once done.
         """
-        siblings = self._siblings(ticker, analysis_date, profile)
+        siblings = [
+            r
+            for r in self._siblings(ticker, analysis_date, profile)
+            if getattr(r, "user_id", None) == owner
+        ]
         if not siblings:
             return None
 
@@ -194,9 +201,12 @@ class InMemoryRunStore:
         )
 
     async def history(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile
+        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunHistory | None:
         siblings = self._siblings(ticker, analysis_date, profile)
+        siblings = [
+            r for r in siblings if owner is None or getattr(r, "user_id", None) == owner
+        ]
         if not siblings:
             return None
         return RunHistory(
@@ -217,9 +227,13 @@ class InMemoryRunStore:
         return len(self._runs)
 
     async def list(
-        self, ticker: str | None, limit: int, offset: int
+        self, ticker: str | None, limit: int, offset: int, owner: str | None
     ) -> list[RunSummary]:
-        runs = list(self._runs.values())
+        runs = [
+            r
+            for r in self._runs.values()
+            if owner is None or getattr(r, "user_id", None) == owner
+        ]
         if ticker is not None:
             runs = [r for r in runs if r.ticker == ticker]
         # Newest first, with id as a tiebreak so pagination is deterministic

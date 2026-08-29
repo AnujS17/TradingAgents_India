@@ -199,6 +199,9 @@ class RunSummary(BaseModel):
         description="True when served from an existing run rather than a new "
         "analysis. Repeat requests for the same ticker and date are free.",
     )
+    user_id: str | None = Field(
+        default=None, description="Owning user's id. Null for pre-auth runs not yet backfilled."
+    )
 
     model_config = {"from_attributes": True}
 
