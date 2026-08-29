@@ -28,6 +28,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/push/vapid-public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Vapid Public Key
+         * @description The public half of this server's VAPID keypair, for the browser's
+         *     PushManager.subscribe call. Not a secret -- every subscribing browser
+         *     needs it, and it's meaningless without the private key this server
+         *     alone holds.
+         */
+        get: operations["get_vapid_public_key_push_vapid_public_key_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analyze": {
         parameters: {
             query?: never;
@@ -121,6 +144,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/subscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Subscribe To Run
+         * @description Register a browser push subscription for one run's completion.
+         *
+         *     No accounts, so this is scoped to the run, not a person: whoever has
+         *     this run's page open and grants notification permission gets notified
+         *     when it reaches a terminal state, from whichever browser/device they
+         *     used to subscribe. api.worker sends to every subscription stored here
+         *     and clears them once used (or attempted).
+         *
+         *     404 for an already-finished run: subscribing to something that will
+         *     never transition again is a caller bug, not a valid no-op state to
+         *     silently accept -- better to fail loudly than let a client believe a
+         *     notification is coming that never will.
+         */
+        post: operations["subscribe_to_run_runs__run_id__subscribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{ticker}/{analysis_date}/history": {
         parameters: {
             query?: never;
@@ -187,6 +241,60 @@ export interface paths {
          *     analysis_date and 422 instead of streaming.
          */
         get: operations["stream_run_runs__run_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/export.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Run Pdf
+         * @description A one-page-plus PDF: the verdict card's fields, then every available
+         *     report grouped the same way ReportsRecord.tsx groups them on screen.
+         *
+         *     404, not an empty/partial file, for a run with nothing to export yet --
+         *     same reasoning as POST /runs/{id}/resume's 404 for a run that hasn't
+         *     failed: better to fail loudly than hand back a file that looks legitimate
+         *     but is missing the one thing (a verdict) the export exists to capture.
+         *
+         *     Registered here, above /runs/{ticker}/{analysis_date}, for the same
+         *     reason stream_run is (see its docstring): both are two-segment GET
+         *     paths under /runs, and route order decides which one FastAPI tries
+         *     first.
+         */
+        get: operations["export_run_pdf_runs__run_id__export_pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/export.xlsx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Run Excel
+         * @description A Summary sheet (the verdict card's fields) plus a Full reports sheet
+         *     (one row per available report: group, label, word count, content).
+         *
+         *     Same 404 contract and route-ordering reason as export_run_pdf above.
+         */
+        get: operations["export_run_excel_runs__run_id__export_xlsx_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -321,6 +429,26 @@ export interface components {
             snippet?: string | null;
         };
         /**
+         * PushSubscribeRequest
+         * @description A browser PushSubscription, exactly as PushSubscription.toJSON()
+         *     serialises it -- passed straight through, no reshaping on the client.
+         */
+        PushSubscribeRequest: {
+            /** Endpoint */
+            endpoint: string;
+            keys: components["schemas"]["PushSubscriptionKeys"];
+        };
+        /**
+         * PushSubscriptionKeys
+         * @description The `keys` object of a browser PushSubscription.toJSON().
+         */
+        PushSubscriptionKeys: {
+            /** P256Dh */
+            p256dh: string;
+            /** Auth */
+            auth: string;
+        };
+        /**
          * Reports
          * @description The full analysis text, stage by stage.
          *
@@ -394,6 +522,11 @@ export interface components {
              * @default false
              */
             cached: boolean;
+            /**
+             * User Id
+             * @description Owning user's id. Null for pre-auth runs not yet backfilled.
+             */
+            user_id?: string | null;
             verdict?: components["schemas"]["Verdict"] | null;
             reports?: components["schemas"]["Reports"] | null;
             /**
@@ -480,6 +613,11 @@ export interface components {
              * @default false
              */
             cached: boolean;
+            /**
+             * User Id
+             * @description Owning user's id. Null for pre-auth runs not yet backfilled.
+             */
+            user_id?: string | null;
         };
         /**
          * TradeLevels
@@ -515,6 +653,14 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VapidPublicKey */
+        VapidPublicKey: {
+            /**
+             * Key
+             * @description URL-safe base64, uncompressed EC point -- pass directly as PushManager.subscribe's applicationServerKey.
+             */
+            key: string;
         };
         /** Verdict */
         Verdict: {
@@ -560,10 +706,32 @@ export interface operations {
             };
         };
     };
-    request_analysis_analyze_post: {
+    get_vapid_public_key_push_vapid_public_key_get: {
         parameters: {
             query?: never;
             header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VapidPublicKey"];
+                };
+            };
+        };
+    };
+    request_analysis_analyze_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -596,7 +764,9 @@ export interface operations {
     stop_run_runs__run_id__stop_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 run_id: string;
             };
@@ -627,7 +797,9 @@ export interface operations {
     resume_run_runs__run_id__resume_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 run_id: string;
             };
@@ -655,12 +827,49 @@ export interface operations {
             };
         };
     };
+    subscribe_to_run_runs__run_id__subscribe_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushSubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_run_history_runs__ticker___analysis_date__history_get: {
         parameters: {
             query?: {
                 profile?: components["schemas"]["AnalysisProfile"];
             };
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 ticker: string;
                 analysis_date: string;
@@ -692,7 +901,9 @@ export interface operations {
     get_run_runs__run_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 run_id: string;
             };
@@ -723,7 +934,75 @@ export interface operations {
     stream_run_runs__run_id__stream_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_run_pdf_runs__run_id__export_pdf_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_run_excel_runs__run_id__export_xlsx_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 run_id: string;
             };
@@ -756,7 +1035,9 @@ export interface operations {
             query?: {
                 profile?: components["schemas"]["AnalysisProfile"];
             };
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 ticker: string;
                 analysis_date: string;
@@ -792,7 +1073,9 @@ export interface operations {
                 limit?: number;
                 offset?: number;
             };
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

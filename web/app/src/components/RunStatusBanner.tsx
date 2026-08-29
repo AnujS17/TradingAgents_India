@@ -4,6 +4,14 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { resumeRun, stopRun, type RunDetail } from '@/lib/api-client/client';
 import { formatDuration, parseApiTimestamp } from '@/lib/format';
+import {
+  PushPermissionDeniedError,
+  PushServiceUnreachableError,
+  PushUnsupportedError,
+  subscribeToRunNotifications,
+} from '@/lib/push';
+
+type NotifyState = 'idle' | 'subscribing' | 'subscribed' | 'error';
 
 export function RunStatusBanner({
   run,
@@ -24,6 +32,9 @@ export function RunStatusBanner({
   // Resume button.
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  // Local-only, same as stopping/resuming above -- see handleNotify.
+  const [notifyState, setNotifyState] = useState<NotifyState>('idle');
+  const [notifyError, setNotifyError] = useState<string | null>(null);
 
   useEffect(() => {
     if (run.status !== 'queued' && run.status !== 'running') return;
@@ -57,6 +68,33 @@ export function RunStatusBanner({
     } catch {
       setResuming(false);
       setResumeError('Could not resume this analysis. Try again in a moment.');
+    }
+  }
+
+  // A run takes 4-14 minutes, so "leave the tab open and check back" is the
+  // realistic default -- this is the opt-in for "tell me instead." Scoped
+  // to this run, not an account (there are none): whichever browser grants
+  // permission gets a native OS notification when the run finishes, even
+  // if that tab is later closed (see public/sw.js). Idempotent to click
+  // again after an error; not offered once already subscribed, since
+  // there's nothing left to do.
+  async function handleNotify() {
+    setNotifyState('subscribing');
+    setNotifyError(null);
+    try {
+      await subscribeToRunNotifications(run.id);
+      setNotifyState('subscribed');
+    } catch (err) {
+      setNotifyState('error');
+      if (err instanceof PushUnsupportedError) {
+        setNotifyError('Notifications are not supported in this browser.');
+      } else if (err instanceof PushPermissionDeniedError) {
+        setNotifyError('Notification permission was not granted.');
+      } else if (err instanceof PushServiceUnreachableError) {
+        setNotifyError(err.message);
+      } else {
+        setNotifyError('Could not enable notifications. Try again in a moment.');
+      }
     }
   }
 
@@ -112,14 +150,31 @@ export function RunStatusBanner({
     <div role="status" aria-live="polite" className="w-full sm:w-auto sm:min-w-[300px]">
       <div className="flex items-start justify-between gap-4">
         <p className="font-tight font-bold text-white text-base">{run.status === 'queued' ? 'Queued' : 'Running'}</p>
-        <button
-          type="button"
-          onClick={handleStop}
-          disabled={stopping}
-          className="font-tight font-bold text-xs rounded-full border border-white/25 text-white/80 px-3.5 py-1.5 hover:border-white/45 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-default"
-        >
-          {stopping ? 'Stopping…' : 'Stop'}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {notifyState !== 'subscribed' && (
+            <button
+              type="button"
+              onClick={handleNotify}
+              disabled={notifyState === 'subscribing'}
+              className="font-tight font-bold text-xs rounded-full border border-white/25 text-white/80 px-3.5 py-1.5 hover:border-white/45 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-default"
+            >
+              {notifyState === 'subscribing' ? 'Enabling…' : '🔔 Notify me'}
+            </button>
+          )}
+          {notifyState === 'subscribed' && (
+            <span className="font-tight font-bold text-xs rounded-full border border-white/25 text-white/55 px-3.5 py-1.5">
+              🔔 Notified
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleStop}
+            disabled={stopping}
+            className="font-tight font-bold text-xs rounded-full border border-white/25 text-white/80 px-3.5 py-1.5 hover:border-white/45 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-default"
+          >
+            {stopping ? 'Stopping…' : 'Stop'}
+          </button>
+        </div>
       </div>
       <dl className="flex items-baseline gap-6 mt-3">
         <div>
@@ -130,6 +185,7 @@ export function RunStatusBanner({
       {estimateText && <p className="copy-dark text-white/55 mt-2">{estimateText}</p>}
       <p className="copy-dark text-white/55 mt-1">This can take 4 to 14 minutes. You can leave this page and come back, the link stays valid.</p>
       {stopError && <p role="alert" className="copy-dark text-[#FF9D7A] mt-2">{stopError}</p>}
+      {notifyError && <p role="alert" className="copy-dark text-[#FF9D7A] mt-2">{notifyError}</p>}
     </div>
   );
 }
