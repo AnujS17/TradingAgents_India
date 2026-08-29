@@ -8,9 +8,18 @@ architecture.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated
+
 import jwt
+from fastapi import Depends, Header, HTTPException
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.settings import get_settings
+
+if TYPE_CHECKING:
+    from api.db import User
 
 
 class InvalidToken(Exception):
@@ -42,3 +51,117 @@ def decode_token(token: str) -> dict:
         raise InvalidToken("token missing 'sub' claim")
 
     return claims
+
+
+@dataclass(frozen=True)
+class CurrentUser:
+    """The subset of a User row request handlers actually need. A
+    dataclass, not the SQLAlchemy row itself, so a handler can never
+    accidentally trigger a lazy-load outside the session that fetched it."""
+
+    id: str
+    role: str
+    tier: str
+
+
+async def get_or_create_user(
+    sessionmaker: async_sessionmaker,
+    *,
+    google_sub: str,
+    email: str,
+    name: str | None,
+    picture: str | None,
+) -> User:
+    """Look up a user by Google's stable `sub`, or create one.
+
+    The first row ever inserted into `users` becomes role="admin"; every
+    one after is role="user". The COUNT and the INSERT happen in the same
+    transaction so two simultaneous first-logins cannot both become admin
+    -- SQLite serialises writers (api/db.py's own documented limit), which
+    is exactly the property this relies on.
+    """
+    from api.db import User, new_run_id, utcnow
+
+    async with sessionmaker() as session:
+        existing = await session.execute(select(User).where(User.google_sub == google_sub))
+        user = existing.scalar_one_or_none()
+        if user is not None:
+            user.last_login_at = utcnow()
+            user.email = email
+            user.name = name
+            user.picture = picture
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+        count = (await session.execute(select(func.count(User.id)))).scalar_one()
+        role = "admin" if count == 0 else "user"
+
+        user = User(
+            id=new_run_id(),
+            google_sub=google_sub,
+            email=email,
+            name=name,
+            picture=picture,
+            role=role,
+            created_at=utcnow(),
+            last_login_at=utcnow(),
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        if role == "admin":
+            from api.db import Run
+
+            await session.execute(update(Run).where(Run.user_id.is_(None)).values(user_id=user.id))
+            await session.commit()
+
+        return user
+
+
+async def _find_user_by_sub(google_sub: str) -> "User | None":
+    from api.db import User, get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        result = await session.execute(select(User).where(User.google_sub == google_sub))
+        return result.scalar_one_or_none()
+
+
+async def get_current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
+    """FastAPI dependency: verify the bearer token and load its user.
+
+    401 for every failure mode -- missing header, wrong scheme, bad
+    signature, expired, or a sub with no matching row (deleted account) --
+    deliberately identical, so nothing about WHY a token failed leaks to
+    an unauthenticated caller.
+    """
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        claims = decode_token(token)
+    except InvalidToken as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token", headers={"WWW-Authenticate": "Bearer"}) from exc
+
+    user = await _find_user_by_sub(claims["sub"])
+    if user is None:
+        raise HTTPException(status_code=401, detail="Account not found", headers={"WWW-Authenticate": "Bearer"})
+
+    return CurrentUser(id=user.id, role=user.role, tier=user.tier)
+
+
+async def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """FastAPI dependency: get_current_user, plus a role check. Not used by
+    any Phase 1 route directly (ownership checks cover the per-run 404
+    case) -- exists now because Task 6's ownership-check helper reads
+    current_user.role == "admin" directly, and this dependency is the one
+    later phases (an admin API) will actually import."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+AdminUserDep = Annotated[CurrentUser, Depends(require_admin)]
