@@ -20,28 +20,39 @@ PUBLIC_PATHS = {
 }
 
 
+def _flatten_routes(routes):
+    """Recursively flatten routes, unwrapping nested _IncludedRouter objects.
+
+    Ensures that even deeply nested routers (routers included in other routers
+    before mounting on the app) are enumerated, preventing unprotected routes
+    from silently slipping through if the app structure changes.
+    """
+    flat = []
+    for route in routes:
+        if hasattr(route, "original_router"):
+            flat.extend(_flatten_routes(route.original_router.routes))
+        else:
+            flat.append(route)
+    return flat
+
+
 @pytest.mark.unit
 def test_every_non_public_route_requires_authentication():
     app = create_app()
     app.dependency_overrides[get_run_store] = lambda: InMemoryRunStore()
 
     protected_get_paths = []
-    for route in app.routes:
-        # Handle _IncludedRouter by extracting its original router
-        if hasattr(route, "original_router"):
-            routes_to_check = route.original_router.routes
-        else:
-            routes_to_check = [route]
+    flattened_routes = _flatten_routes(app.routes)
 
-        for subroute in routes_to_check:
-            path = getattr(subroute, "path", None)
-            methods = getattr(subroute, "methods", None)
-            if path is None or methods is None or path in PUBLIC_PATHS:
-                continue
-            if "{" in path:
-                continue  # path-param routes checked individually below
-            if "GET" in methods:
-                protected_get_paths.append(path)
+    for route in flattened_routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if path is None or methods is None or path in PUBLIC_PATHS:
+            continue
+        if "{" in path:
+            continue  # path-param routes checked individually below
+        if "GET" in methods:
+            protected_get_paths.append(path)
 
     assert "/runs" in protected_get_paths, "sanity check: the enumeration itself must find at least /runs"
 
