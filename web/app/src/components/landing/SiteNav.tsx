@@ -1,7 +1,9 @@
 import Link from 'next/link';
+import { AuthControl } from '@/components/AuthControl';
 
 // Ported verbatim from web/design/landing-fintech/index.html lines 443-463.
-// Static — no data, no client state, so this stays a server component.
+// Static markup stays a server component; AuthControl (session-aware) is the
+// one client-rendered piece inside it.
 export function SiteNav() {
   return (
     <header
@@ -35,6 +37,7 @@ export function SiteNav() {
           <Link href="/runs" className="transition hover:opacity-75 hover:text-white">
             Saved runs
           </Link>
+          <AuthControl />
         </nav>
         {/* Anchors to the hero's SearchForm wrapper (id="try" — see Hero.tsx). */}
         <a

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { AuthControl } from '@/components/AuthControl';
 import { SearchForm } from '@/components/SearchForm';
 import type { AnalysisProfile } from '@/lib/api-client/client';
 
@@ -34,6 +35,9 @@ export function ResearchNav({ profile }: { profile: AnalysisProfile }) {
         <span className="hidden sm:block text-xs font-tight font-bold text-white/50 shrink-0">
           {PROFILE_LABELS[profile]}
         </span>
+        <div className="hidden sm:block shrink-0">
+          <AuthControl />
+        </div>
       </div>
     </header>
   );
