@@ -1,0 +1,79 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "*",
+        "files": [
+          "web/research/index.html"
+        ],
+        "createdAt": "2026-08-16T06:46:19.742Z",
+        "reason": "web/DESIGN.md S2: fonts pinned by the client, 'do not substitute, and ignore any Inter is overused detector finding'; listed as a standing override in S8."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "web/research/index.html"
+        ],
+        "createdAt": "2026-08-16T06:46:31.030Z",
+        "reason": "web/DESIGN.md S5+S8 standing override: class-driven max-height accordion; grid-template-rows 0fr-to-1fr does not interpolate in Chrome so the alternative is broken. Inner .rep__doc is height-capped, so the animated value is bounded."
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "web/landing-fintech/index.html"
+        ],
+        "createdAt": "2026-08-16T07:04:55.824Z",
+        "reason": "web/DESIGN.md S8 standing override: .icon-tile-shadow is 'box-shadow: 0 7px 24px 0 rgba(36,162,255,.16) inset' - an inset highlight with a 7px y-offset, not a zero-offset halo. Verified at L110; the regex cannot see the inset keyword."
+      },
+      {
+        "rule": "overused-font",
+        "value": "*",
+        "files": [
+          "web/landing-fintech/index.html"
+        ],
+        "createdAt": "2026-08-16T07:09:42.325Z",
+        "reason": "web/DESIGN.md S2: fonts pinned by the client, 'do not substitute, and ignore any Inter is overused detector finding'; standing override in S8."
+      },
+      {
+        "rule": "marquee",
+        "value": "*",
+        "files": [
+          "web/landing-fintech/index.html"
+        ],
+        "createdAt": "2026-08-16T07:09:42.459Z",
+        "reason": "web/DESIGN.md S8 standing override: ticker is a requested feature and pauses on hover. Verified L91 .u-ticker:hover .u-ticker-track animation-play-state paused."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "web/landing-fintech/index.html"
+        ],
+        "createdAt": "2026-08-16T07:09:42.586Z",
+        "reason": "web/DESIGN.md S5+S8 standing override: class-driven max-height accordion; grid-template-rows 0fr-to-1fr does not interpolate in Chrome."
+      },
+      {
+        "rule": "overused-font",
+        "value": "*",
+        "files": [
+          "web/app/src/app/globals.css"
+        ],
+        "createdAt": "2026-08-22T00:00:00.000Z",
+        "reason": "Same standing override as web/research/index.html and web/landing-fintech/index.html, extended to the real ported implementation: web/design/DESIGN.md S2 pins Inter/Inter Tight and says explicitly to ignore this detector finding. globals.css is where those two static mockups' fonts actually got ported into the live app (web/app/), so the same override applies here."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "web/app/src/app/globals.css"
+        ],
+        "createdAt": "2026-08-29T23:20:23.902Z"
+      }
+    ]
+  }
+}
