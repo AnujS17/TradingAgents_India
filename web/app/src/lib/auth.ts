@@ -4,6 +4,21 @@ import jwt from 'jsonwebtoken';
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days, matches the default NextAuth session lifetime
 
+/** Same signing call jwt.encode below makes -- factored out so session()
+ * can mint an equally-valid bearer token for client-side use (see the
+ * session() callback's comment for why this is necessary at all). Not
+ * required to be byte-identical to whatever's in the session cookie --
+ * only to be a validly-signed token carrying the same claims, which any
+ * fresh call to this produces regardless of the "exp" drifting a few
+ * seconds from the cookie's own. */
+function signBearerToken(claims: { sub?: string; role?: string; tier?: string }): string {
+  return jwt.sign(
+    { sub: claims.sub, role: claims.role, tier: claims.tier },
+    process.env.NEXTAUTH_SECRET as string,
+    { algorithm: 'HS256', expiresIn: SESSION_MAX_AGE_SECONDS },
+  );
+}
+
 // The JWT this produces is sent to FastAPI as a bearer token
 // (api/auth.py::decode_token verifies it independently, same
 // NEXTAUTH_SECRET / TRADINGAGENTS_API_JWT_SECRET value, HS256). role and
@@ -30,12 +45,8 @@ export const authOptions: NextAuthOptions = {
   // is not optional hardening, the default token is simply not usable as
   // a cross-service bearer token without it.
   jwt: {
-    async encode({ secret, token }) {
-      return jwt.sign(
-        { sub: token?.sub, role: token?.role, tier: token?.tier },
-        secret as string,
-        { algorithm: 'HS256', expiresIn: SESSION_MAX_AGE_SECONDS },
-      );
+    async encode({ token }) {
+      return signBearerToken({ sub: token?.sub, role: token?.role as string, tier: token?.tier as string });
     },
     async decode({ secret, token }) {
       if (!token) return null;
@@ -51,16 +62,27 @@ export const authOptions: NextAuthOptions = {
       }
       return token;
     },
-    // No accessToken assignment here on purpose. Because of the jwt.encode
-    // override above, NextAuth's managed token (the raw encoded string) IS
-    // now a plain HS256 JWS carrying exactly {sub, role, tier, exp} -- the
-    // bearer token FastAPI verifies, with nothing left to re-derive or
-    // re-sign in this callback. Task 9's api-client obtains that raw
-    // string directly via next-auth/jwt's getToken({ raw: true }), both
-    // server- and client-side; session() only needs to pass session
-    // through unchanged.
-    async session({ session }) {
-      return session;
+    // getToken({ raw: true }) (Task 9) only works SERVER-side -- it reads
+    // httpOnly cookies straight off the request and needs NEXTAUTH_SECRET,
+    // neither of which a Client Component has access to (that secret is
+    // never sent to the browser, on purpose). So client-side callers have
+    // no way to obtain the raw signed cookie value directly; the session
+    // object returned by getSession()/useSession() is the only channel
+    // available to them. Minting a fresh, equally-valid bearer token here
+    // (same claims, same secret, via signBearerToken -- the exact
+    // jwt.encode logic above) and exposing it as session.accessToken is
+    // what makes that channel work. It does not need to match the cookie's
+    // token byte-for-byte, only to carry the same claims and verify
+    // correctly against api.auth.decode_token, which it does.
+    async session({ session, token }) {
+      return {
+        ...session,
+        accessToken: signBearerToken({
+          sub: token?.sub,
+          role: token?.role as string,
+          tier: token?.tier as string,
+        }),
+      };
     },
   },
 };
