@@ -19,6 +19,7 @@ These are deliberately excluded to keep Phase 1 shippable. Each is a separate fu
 - **Per-tier rate limit enforcement.** `tier` is stored but does not yet change behaviour. The existing IP-based cap stays exactly as-is.
 - **Email/password, magic links, other OAuth providers.** Google only.
 - **Team/organisation accounts.** Single-user accounts only.
+- **Cross-user run sharing.** Two users asking about the same ticker/date each get their own private run. See "Cache Scoping" below and `docs/superpowers/specs/2026-08-29-v2-global-run-cache-sharing.md` for the deferred alternative.
 
 ## Architecture
 
@@ -95,15 +96,13 @@ Two roles, enforced at the route layer:
 
 **Not-found over forbidden.** A non-owner requesting someone else's run gets **404**, not 403. A 403 confirms the run exists, leaking which tickers other users have analysed — run IDs are enumerable-ish and ticker interest is commercially sensitive. The route reads as "this run does not exist *for you*."
 
-### The cache-sharing tension (important)
+### Cache scoping (simplified for Phase 1)
 
-`POST /analyze` currently serves a cached run to *any* caller asking the same ticker/date/profile, and its docstring names this as intentional: *"two users asking the same question get the same answer rather than two independently sampled verdicts,"* and it "is what makes on-demand analysis affordable for a public audience."
+`POST /analyze` currently serves a cached run to *any* caller asking the same ticker/date/profile — a global cache, with the stated rationale that it's "what makes on-demand analysis affordable for a public audience" and gives "two users asking the same question... the same answer."
 
-Ownership breaks that outright: if runs are private, User B cannot be handed User A's run, and the cost-saving disappears exactly when a user base makes it matter most.
+**Phase 1 explicitly gives this up in favour of the simpler, more conventional model: the cache lookup (`store.find()`) becomes scoped to the requesting user.** Each user only ever sees, and only ever gets cache hits against, their own runs. Two different users asking about the same ticker/date each spend their own run. This is a deliberate, known cost regression versus the current global-cache behaviour — accepted for now because it's the straightforward, unsurprising ownership model to build the foundation on, and because Phase 1 has no real multi-user traffic yet to make the cost difference material.
 
-**Resolution for Phase 1:** the cache lookup stays global (any user's completed run for that ticker/date/profile can satisfy a request), but **serving a cached run does not transfer ownership** — instead it creates a lightweight *reference* for the requesting user. Concretely: `store.find()` remains global; when it hits, a new `runs` row is **not** created, and instead the existing run is recorded as visible to this user via a `run_viewers` association (`run_id`, `user_id`, `created_at`, unique on the pair). `GET /runs` returns runs the user owns **or** has a viewer row for. Ownership (`user_id`) still marks who paid for it.
-
-This preserves the cost model exactly, keeps the "same question, same answer" property, and still prevents a user from browsing runs they never asked for. The cost is one extra small table; the alternative — per-user duplicate runs — multiplies LLM spend by the number of users asking the same popular ticker, which is the opposite of the product's stated economics.
+**The global-cache design (a `run_viewers` association preserving the cost-sharing property without transferring ownership) is fully designed and deferred to v2** — see `docs/superpowers/specs/2026-08-29-v2-global-run-cache-sharing.md`. Revisit it once there's enough concurrent usage that duplicate per-user runs on popular tickers start costing real money.
 
 ## First-Admin Bootstrap
 
@@ -116,7 +115,7 @@ This is chosen over an env-var allowlist (`ADMIN_EMAILS=...`) because it needs n
 ~30 existing runs (HAL, SAIL, EXIDEIND, LENSKART, etc.) have `requested_by` set to an IP and no user. Per decision: **assign all of them to the first admin account.**
 
 Executed by an idempotent startup migration alongside the existing `create_tables()` pattern in `api/db.py`, which already performs guarded `ALTER TABLE ... ADD COLUMN` calls for exactly this kind of evolution:
-1. Create `users` and `run_viewers` tables if absent.
+1. Create the `users` table if absent.
 2. Add `runs.user_id` if absent.
 3. On first admin creation, `UPDATE runs SET user_id = <admin_id> WHERE user_id IS NULL`.
 
@@ -146,7 +145,7 @@ Auth is security-critical and gets adversarial tests, not just happy-path ones.
 - Admin override grants access where a plain user gets 404.
 - First-signin-becomes-admin; second signin does not.
 - Migration: existing null-`user_id` runs land on the admin, and the backfill does not re-run on a later signup.
-- Cache-share: user B requesting user A's already-analysed ticker gets the same run, gains a viewer row, and creates no duplicate run.
+- Cache scoping: user B requesting user A's already-analysed ticker/date gets a **separate, independently-spent run**, not user A's data — confirms private-by-default with no accidental cross-user leakage through the cache path.
 
 **Frontend (vitest):** unauthenticated users are redirected to login; the API client attaches the token; session-less state renders the signed-out nav.
 
@@ -154,10 +153,10 @@ Auth is security-critical and gets adversarial tests, not just happy-path ones.
 
 **New:** `api/auth.py` (JWT verification + `get_current_user`/`require_admin` dependencies), `tests/test_auth.py`, `tests/test_route_protection.py`, `tests/test_run_ownership.py`, `web/app/src/app/api/auth/[...nextauth]/route.ts`, `web/app/src/app/login/page.tsx`.
 
-**Modified:** `api/db.py` (User/RunViewer models, migration), `api/schemas.py` (User schemas), `api/dependencies.py` + `api/store.py` (owner-scoped queries), `api/routers/runs.py` (dependencies on all routes), `api/settings.py` (JWT secret, Google client config), `api/ratelimit.py` (user-aware identity), `web/app/src/lib/api-client/client.ts` (attach bearer token), `web/app/src/app/layout.tsx` (session provider), nav components.
+**Modified:** `api/db.py` (User model, migration), `api/schemas.py` (User schemas), `api/dependencies.py` + `api/store.py` (owner-scoped queries, `find()` scoped to `user_id`), `api/routers/runs.py` (dependencies on all routes), `api/settings.py` (JWT secret, Google client config), `api/ratelimit.py` (user-aware identity), `web/app/src/lib/api-client/client.ts` (attach bearer token), `web/app/src/app/layout.tsx` (session provider), nav components.
 
 ## Open Questions for Later Phases
 
 1. When does per-tier limiting replace the flat IP cap?
-2. Should `run_viewers` rows expire, or accumulate forever?
+2. When does global run-cache sharing (v2 doc) become worth the added complexity?
 3. Admin bootstrap hardening before public launch (see above).
