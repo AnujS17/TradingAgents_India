@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # strictly-serial behavior until someone opts in.
     worker_concurrency: int = 1
 
+    # Signs and verifies the JWT NextAuth issues (api/auth.py). No default,
+    # deliberately: pydantic-settings raises at Settings() construction if
+    # this is unset, which happens at app startup (api/main.py's
+    # create_app -> get_settings()) -- so a missing secret fails closed at
+    # boot, not open on the first request. Must match NEXTAUTH_SECRET on
+    # the frontend exactly; they are the same value, not a keypair.
+    jwt_secret: str
+
     allowed_origins: list[str] = ["http://localhost:3000"]
     allowed_methods: list[str] = ["GET", "POST", "OPTIONS"]
     allowed_headers: list[str] = ["Authorization", "Content-Type"]

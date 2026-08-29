@@ -98,6 +98,31 @@ class Run(Base):
     )
 
 
+class User(Base):
+    """A signed-in account. Identity is Google's `sub` claim, not email --
+    Google documents `sub` as the only stable per-user identifier; an email
+    address can be changed or reassigned, which would otherwise orphan (or
+    worse, hijack) a run history keyed on it."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    google_sub: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(256), index=True)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    picture: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "user" | "admin". Plain String, not an Enum column -- SQLite has no
+    # native enum type, and the rest of this codebase (Run.status,
+    # Run.profile) already stores its enums as plain strings for the same
+    # reason; api.schemas.UserRole is the typed boundary at the wire layer.
+    role: Mapped[str] = mapped_column(String(16), default="user")
+    # "free" | "paid". Stored now, read by nothing yet (Phase 1 does not
+    # enforce per-tier limits -- see the spec's Non-Goals).
+    tier: Mapped[str] = mapped_column(String(16), default="free")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class RunEvent(Base):
     """Ephemeral: one run's streamed token chunks, deleted once that run
     reaches completed or failed (see docs/superpowers/specs/
