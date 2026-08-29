@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Annotated
 
 import jwt
 from fastapi import Depends, Header, HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.settings import get_settings
@@ -75,10 +76,23 @@ async def get_or_create_user(
     """Look up a user by Google's stable `sub`, or create one.
 
     The first row ever inserted into `users` becomes role="admin"; every
-    one after is role="user". The COUNT and the INSERT happen in the same
-    transaction so two simultaneous first-logins cannot both become admin
-    -- SQLite serialises writers (api/db.py's own documented limit), which
-    is exactly the property this relies on.
+    one after is role="user". The count-and-decide and the INSERT are done
+    as a *single* SQL statement (INSERT ... SELECT with the role computed
+    by a CASE against a subquery on the same table) rather than a
+    SELECT-then-INSERT pair. SQLite only ever lets one writer hold the
+    write lock at a time, and that lock is held for the statement/
+    transaction's whole duration -- so a two-statement "read the count,
+    then insert" leaves a window where a second connection's read can
+    observe the same pre-insert count before the first has committed
+    (both becoming admin). Folding it into one statement removes that
+    window: the inner COUNT(*) is evaluated against the table's committed
+    state as of this statement's start, and no other connection's write
+    can interleave inside it.
+
+    If a *second* login for the SAME google_sub races this one (e.g. a
+    double-tab first login), the UNIQUE constraint on google_sub makes the
+    loser's INSERT raise IntegrityError -- caught below, and handled by
+    re-selecting and returning the winner's row rather than raising.
     """
     from api.db import User, new_run_id, utcnow
 
@@ -94,24 +108,45 @@ async def get_or_create_user(
             await session.refresh(user)
             return user
 
-        count = (await session.execute(select(func.count(User.id)))).scalar_one()
-        role = "admin" if count == 0 else "user"
-
-        user = User(
-            id=new_run_id(),
-            google_sub=google_sub,
-            email=email,
-            name=name,
-            picture=picture,
-            role=role,
-            created_at=utcnow(),
-            last_login_at=utcnow(),
+        new_id = new_run_id()
+        created_at = utcnow()
+        insert_stmt = text(
+            """
+            INSERT INTO users (id, google_sub, email, name, picture, role, tier, created_at, last_login_at)
+            SELECT :id, :google_sub, :email, :name, :picture,
+                   CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+                   'free', :created_at, :created_at
+            """
         )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
+        try:
+            await session.execute(
+                insert_stmt,
+                {
+                    "id": new_id,
+                    "google_sub": google_sub,
+                    "email": email,
+                    "name": name,
+                    "picture": picture,
+                    "created_at": created_at,
+                },
+            )
+            await session.commit()
+        except IntegrityError:
+            # Someone else's INSERT for this exact google_sub won the race
+            # between our "not found" lookup above and our own INSERT.
+            # That row is the real one now -- fetch and return it instead
+            # of surfacing a raw constraint-violation error to the caller.
+            await session.rollback()
+            existing_after = await session.execute(select(User).where(User.google_sub == google_sub))
+            user = existing_after.scalar_one_or_none()
+            if user is None:
+                raise
+            return user
 
-        if role == "admin":
+        result = await session.execute(select(User).where(User.google_sub == google_sub))
+        user = result.scalar_one()
+
+        if user.role == "admin":
             from api.db import Run
 
             await session.execute(update(Run).where(Run.user_id.is_(None)).values(user_id=user.id))
@@ -133,21 +168,25 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
 
     401 for every failure mode -- missing header, wrong scheme, bad
     signature, expired, or a sub with no matching row (deleted account) --
-    deliberately identical, so nothing about WHY a token failed leaks to
-    an unauthenticated caller.
+    deliberately identical, INCLUDING the response body's `detail` string,
+    so nothing about WHY a token failed leaks to an unauthenticated
+    caller. (Distinct log messages / exception chaining server-side are
+    fine -- it's only the value that crosses the wire that must not vary.)
     """
+    _AUTH_FAILURE_DETAIL = "Not authenticated"
+
     if authorization is None or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(status_code=401, detail=_AUTH_FAILURE_DETAIL, headers={"WWW-Authenticate": "Bearer"})
 
     token = authorization.removeprefix("Bearer ").strip()
     try:
         claims = decode_token(token)
     except InvalidToken as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired token", headers={"WWW-Authenticate": "Bearer"}) from exc
+        raise HTTPException(status_code=401, detail=_AUTH_FAILURE_DETAIL, headers={"WWW-Authenticate": "Bearer"}) from exc
 
     user = await _find_user_by_sub(claims["sub"])
     if user is None:
-        raise HTTPException(status_code=401, detail="Account not found", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(status_code=401, detail=_AUTH_FAILURE_DETAIL, headers={"WWW-Authenticate": "Bearer"})
 
     return CurrentUser(id=user.id, role=user.role, tier=user.tier)
 

@@ -188,3 +188,73 @@ def test_get_current_user_rejects_a_token_for_a_deleted_account(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         _run(auth_module.get_current_user(authorization=f"Bearer {token}"))
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.unit
+def test_401_detail_does_not_leak_which_failure_mode_occurred(monkeypatch):
+    """Missing header, wrong scheme, and deleted-account all return the
+    exact same `detail` string -- otherwise the response body itself
+    tells an unauthenticated caller WHY their request failed, which is
+    exactly what a uniform 401 is supposed to prevent."""
+    import api.auth as auth_module
+
+    async def fake_lookup(sub):
+        return None
+
+    monkeypatch.setattr(auth_module, "_find_user_by_sub", fake_lookup)
+
+    exp = datetime.now(timezone.utc) + timedelta(hours=1)
+    token_for_deleted_account = _token({"sub": "sub-does-not-exist", "exp": exp})
+
+    with pytest.raises(HTTPException) as missing_header:
+        _run(auth_module.get_current_user(authorization=None))
+    with pytest.raises(HTTPException) as wrong_scheme:
+        _run(auth_module.get_current_user(authorization="Basic dXNlcjpwYXNz"))
+    with pytest.raises(HTTPException) as deleted_account:
+        _run(auth_module.get_current_user(authorization=f"Bearer {token_for_deleted_account}"))
+
+    details = {
+        missing_header.value.detail,
+        wrong_scheme.value.detail,
+        deleted_account.value.detail,
+    }
+    assert len(details) == 1, f"expected one identical detail string across all failure modes, got {details}"
+
+
+@pytest.mark.unit
+def test_two_different_first_logins_racing_never_both_become_admin(sessionmaker):
+    """The real bug: SELECT COUNT(*) then INSERT as two statements lets
+    two concurrent first-ever logins both observe count == 0 and both
+    become admin. Fires two get_or_create_user calls for two DIFFERENT
+    google_subs via asyncio.gather so both are underway (past their first
+    await point) before either completes -- a genuine interleaving test,
+    not two sequential awaits that happen to pass."""
+    from api.auth import get_or_create_user
+
+    async def scenario():
+        return await asyncio.gather(
+            get_or_create_user(sessionmaker, google_sub="racer-1", email="1@x.com", name="One", picture=None),
+            get_or_create_user(sessionmaker, google_sub="racer-2", email="2@x.com", name="Two", picture=None),
+        )
+
+    first, second = _run(scenario())
+    roles = sorted([first.role, second.role])
+    assert roles == ["admin", "user"], f"expected exactly one admin and one user, got roles={roles}"
+
+
+@pytest.mark.unit
+def test_two_concurrent_logins_with_the_same_google_sub_do_not_raise(sessionmaker):
+    """Two requests for the SAME google_sub racing (e.g. a double-tab
+    login) must not surface a raw IntegrityError from the loser's INSERT
+    hitting the unique constraint -- the loser should transparently
+    return the winner's row instead."""
+    from api.auth import get_or_create_user
+
+    async def scenario():
+        return await asyncio.gather(
+            get_or_create_user(sessionmaker, google_sub="same-sub", email="dup@x.com", name="Dup", picture=None),
+            get_or_create_user(sessionmaker, google_sub="same-sub", email="dup@x.com", name="Dup", picture=None),
+        )
+
+    first, second = _run(scenario())
+    assert first.id == second.id
