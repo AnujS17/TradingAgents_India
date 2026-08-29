@@ -276,6 +276,34 @@ def test_admin_can_view_another_users_run_history(client_and_store):
 
 
 @pytest.mark.unit
+def test_get_run_by_ticker_404s_for_a_non_owner(client_and_store):
+    app, client, store = client_and_store
+    _as_user(app, "user-a")
+    client.post(
+        "/analyze", json={"ticker": "SIEMENS.NS", "analysis_date": "2026-08-20"}
+    )
+
+    _as_user(app, "user-b")
+    resp = client.get("/runs/SIEMENS.NS/2026-08-20")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.unit
+def test_run_history_404s_for_a_non_owner(client_and_store):
+    app, client, store = client_and_store
+    _as_user(app, "user-a")
+    client.post(
+        "/analyze", json={"ticker": "SIEMENS.NS", "analysis_date": "2026-08-20"}
+    )
+
+    _as_user(app, "user-b")
+    resp = client.get("/runs/SIEMENS.NS/2026-08-20/history")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.unit
 def test_resumed_run_stays_owned_by_the_original_owner(client_and_store):
     """create_resume must propagate user_id from the failed run to the new
     one -- otherwise a resumed run would either be unclaimed (user_id=None)
