@@ -15,7 +15,7 @@ from datetime import date as Date
 
 from sqlalchemy import delete, select, update
 
-from api.db import Run, RunEvent, get_sessionmaker, new_run_id, utcnow
+from api.db import PushSubscription, Run, RunEvent, get_sessionmaker, new_run_id, utcnow
 from api.news_sources import extract_news_sources
 from api.schemas import (
     AnalysisProfile,
@@ -397,6 +397,41 @@ class SqlRunStore:
                 RunEventOut(seq=row.seq, node_name=row.node_name, text_delta=row.text_delta)
                 for row in result.scalars()
             ]
+
+    # --- push notifications -----------------------------------------------
+
+    async def add_push_subscription(
+        self, run_id: str, endpoint: str, p256dh: str, auth: str
+    ) -> None:
+        async with self._sessionmaker() as session:
+            session.add(
+                PushSubscription(
+                    run_id=run_id,
+                    endpoint=endpoint,
+                    p256dh=p256dh,
+                    auth=auth,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+    async def get_push_subscriptions(self, run_id: str) -> list[PushSubscription]:
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                select(PushSubscription).where(PushSubscription.run_id == run_id)
+            )
+            return list(result.scalars())
+
+    async def clear_push_subscriptions(self, run_id: str) -> None:
+        """Called once a run's subscribers have been notified (or the
+        attempt made) -- a used subscription has no future purpose, and
+        leaving it would risk a duplicate notification if this ever ran
+        twice for the same run."""
+        async with self._sessionmaker() as session:
+            await session.execute(
+                delete(PushSubscription).where(PushSubscription.run_id == run_id)
+            )
+            await session.commit()
 
     async def count_runs_today(self, requested_by: str | None = None) -> int:
         """Spend counter for the rate limiter. Counts every run including

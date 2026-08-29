@@ -46,6 +46,54 @@ def _sync_db_path() -> str:
     return url[len(prefix):]
 
 
+async def _notify_completion(store: SqlRunStore, row: Run, title: str, body: str) -> None:
+    """Best-effort push notification for one run's terminal state.
+
+    Never raises, and never leaves the run waiting on it: this always runs
+    AFTER the row's status is already durably written, so a notification
+    failure (or the whole push subsystem being unreachable) can never turn
+    a real success or failure into something worse. Each send is pushed to
+    a thread -- pywebpush.webpush does a blocking HTTP POST per
+    subscriber, and awaiting that inline would stall every other lane in
+    this same worker process for however long the push service takes to
+    respond.
+
+    The try/except below is not redundant with push.send's own -- send()
+    guarantees IT never raises, but this function also does its own I/O
+    (get_push_subscriptions, clear_push_subscriptions) that send() has no
+    control over. Nothing in worker_lane's loop wraps this call, and
+    worker_loop runs every lane under asyncio.gather, whose default
+    behavior on an unhandled exception in one task is to cancel every
+    sibling task and re-raise -- so an unguarded failure here would not
+    just skip one notification, it would take down the whole worker
+    process. Caught during development by a test that made push.send raise
+    directly (simulating something failing outside push.send's own
+    guarantee) rather than return False.
+    """
+    try:
+        subscriptions = await store.get_push_subscriptions(row.id)
+        if not subscriptions:
+            return
+
+        import api.push as push
+        from api.settings import get_settings
+
+        vapid_subject = get_settings().vapid_subject
+        payload = {"title": title, "body": body, "url": f"/runs/{row.id}"}
+        for sub in subscriptions:
+            subscription_info = {
+                "endpoint": sub.endpoint,
+                "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+            }
+            await asyncio.to_thread(push.send, subscription_info, payload, vapid_subject)
+
+        # Used (or attempted) either way -- see PushSubscription's docstring
+        # on why a used row is never kept around.
+        await store.clear_push_subscriptions(row.id)
+    except Exception as exc:  # noqa: BLE001 - a courtesy on top of an already-decided run
+        logger.warning("push notification for run %s failed: %s", row.id, exc)
+
+
 async def execute_run(store: SqlRunStore, row: Run) -> None:
     """Run one analysis and record the outcome.
 
@@ -80,18 +128,30 @@ async def execute_run(store: SqlRunStore, row: Run) -> None:
         writer.flush_all()
         writer.close()
         await store.mark_cancelled(row.id)
+        await _notify_completion(
+            store, row, f"{row.ticker} analysis stopped",
+            "You stopped this analysis before it finished.",
+        )
         return
     except Exception as exc:  # noqa: BLE001 - record and continue
         logger.exception("run %s failed", row.id)
         writer.flush_all()
         writer.close()
         await store.mark_failed(row.id, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+        await _notify_completion(
+            store, row, f"{row.ticker} analysis failed",
+            "Tap to see what happened -- you may be able to resume it.",
+        )
         return
 
     writer.flush_all()
     writer.close()
     await store.mark_completed(row.id, verdict, reports)
     logger.info("completed %s (%s)", row.id, verdict.rating or "no rating")
+    await _notify_completion(
+        store, row, f"{row.ticker} analysis complete",
+        f"Rating: {verdict.rating}" if verdict.rating else "Tap to see the full report.",
+    )
 
 
 async def worker_lane(lane_id: int, stop: asyncio.Event, store: SqlRunStore) -> None:

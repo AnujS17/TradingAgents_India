@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # strictly-serial behavior until someone opts in.
     worker_concurrency: int = 1
 
+    # RFC 8292 VAPID "sub" claim: a contact URI the push service can show if
+    # it needs to reach the sender, checked only for format (mailto: or
+    # https://), never verified as deliverable. Change this to a real
+    # address before this ever serves anyone but you.
+    vapid_subject: str = "mailto:noreply@tradingagents.local"
+
     # Signs and verifies the JWT NextAuth issues (api/auth.py). No default,
     # deliberately: pydantic-settings raises at Settings() construction if
     # this is unset, which happens at app startup (api/main.py's

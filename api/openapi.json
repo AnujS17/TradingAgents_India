@@ -28,6 +28,28 @@
         }
       }
     },
+    "/push/vapid-public-key": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Vapid Public Key",
+        "description": "The public half of this server's VAPID keypair, for the browser's\nPushManager.subscribe call. Not a secret -- every subscribing browser\nneeds it, and it's meaningless without the private key this server\nalone holds.",
+        "operationId": "get_vapid_public_key_push_vapid_public_key_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VapidPublicKey"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/analyze": {
       "post": {
         "tags": [
@@ -36,15 +58,33 @@
         "summary": "Request Analysis",
         "description": "Queue an analysis, or hand back the existing one.\n\nReturns **200** with the existing run when this ticker/date/profile has\nalready been analysed, and **202** when a new job was queued. Callers can\ntreat both as success; the status code tells them whether they paid for a\nrun. Serving repeats from cache is what makes on-demand analysis\naffordable for a public audience, and it also means two users asking the\nsame question get the same answer rather than two independently sampled\nverdicts.",
         "operationId": "request_analysis_analyze_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AnalysisRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "202": {
@@ -86,6 +126,22 @@
             "schema": {
               "type": "string",
               "title": "Run Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -130,6 +186,22 @@
               "type": "string",
               "title": "Run Id"
             }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "responses": {
@@ -142,6 +214,68 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{run_id}/subscribe": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Subscribe To Run",
+        "description": "Register a browser push subscription for one run's completion.\n\nNo accounts, so this is scoped to the run, not a person: whoever has\nthis run's page open and grants notification permission gets notified\nwhen it reaches a terminal state, from whichever browser/device they\nused to subscribe. api.worker sends to every subscription stored here\nand clears them once used (or attempted).\n\n404 for an already-finished run: subscribing to something that will\nnever transition again is a caller bug, not a valid no-op state to\nsilently accept -- better to fail loudly than let a client believe a\nnotification is coming that never will.",
+        "operationId": "subscribe_to_run_runs__run_id__subscribe_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSubscribeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -192,6 +326,22 @@
               "$ref": "#/components/schemas/AnalysisProfile",
               "default": "fast"
             }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "responses": {
@@ -235,6 +385,22 @@
               "type": "string",
               "title": "Run Id"
             }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "responses": {
@@ -277,6 +443,136 @@
             "schema": {
               "type": "string",
               "title": "Run Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{run_id}/export.pdf": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Export Run Pdf",
+        "description": "A one-page-plus PDF: the verdict card's fields, then every available\nreport grouped the same way ReportsRecord.tsx groups them on screen.\n\n404, not an empty/partial file, for a run with nothing to export yet --\nsame reasoning as POST /runs/{id}/resume's 404 for a run that hasn't\nfailed: better to fail loudly than hand back a file that looks legitimate\nbut is missing the one thing (a verdict) the export exists to capture.\n\nRegistered here, above /runs/{ticker}/{analysis_date}, for the same\nreason stream_run is (see its docstring): both are two-segment GET\npaths under /runs, and route order decides which one FastAPI tries\nfirst.",
+        "operationId": "export_run_pdf_runs__run_id__export_pdf_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{run_id}/export.xlsx": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Export Run Excel",
+        "description": "A Summary sheet (the verdict card's fields) plus a Full reports sheet\n(one row per available report: group, label, word count, content).\n\nSame 404 contract and route-ordering reason as export_run_pdf above.",
+        "operationId": "export_run_excel_runs__run_id__export_xlsx_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -337,6 +633,22 @@
             "schema": {
               "$ref": "#/components/schemas/AnalysisProfile",
               "default": "fast"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -409,6 +721,22 @@
               "minimum": 0,
               "default": 0,
               "title": "Offset"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -609,6 +937,44 @@
         ],
         "title": "NewsSource",
         "description": "One article the News or Sentiment report was actually given.\n\nRecovered from the pre-fetched article text those reports already\nembed verbatim \u2014 never a claim about which sentence in the report\ncites it, just \"this was in the grounding set.\""
+      },
+      "PushSubscribeRequest": {
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Endpoint"
+          },
+          "keys": {
+            "$ref": "#/components/schemas/PushSubscriptionKeys"
+          }
+        },
+        "type": "object",
+        "required": [
+          "endpoint",
+          "keys"
+        ],
+        "title": "PushSubscribeRequest",
+        "description": "A browser PushSubscription, exactly as PushSubscription.toJSON()\nserialises it -- passed straight through, no reshaping on the client."
+      },
+      "PushSubscriptionKeys": {
+        "properties": {
+          "p256dh": {
+            "type": "string",
+            "title": "P256Dh"
+          },
+          "auth": {
+            "type": "string",
+            "title": "Auth"
+          }
+        },
+        "type": "object",
+        "required": [
+          "p256dh",
+          "auth"
+        ],
+        "title": "PushSubscriptionKeys",
+        "description": "The `keys` object of a browser PushSubscription.toJSON()."
       },
       "Reports": {
         "properties": {
@@ -811,6 +1177,18 @@
             "description": "True when served from an existing run rather than a new analysis. Repeat requests for the same ticker and date are free.",
             "default": false
           },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id",
+            "description": "Owning user's id. Null for pre-auth runs not yet backfilled."
+          },
           "verdict": {
             "anyOf": [
               {
@@ -998,6 +1376,18 @@
             "title": "Cached",
             "description": "True when served from an existing run rather than a new analysis. Repeat requests for the same ticker and date are free.",
             "default": false
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id",
+            "description": "Owning user's id. Null for pre-auth runs not yet backfilled."
           }
         },
         "type": "object",
@@ -1103,6 +1493,20 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VapidPublicKey": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "URL-safe base64, uncompressed EC point -- pass directly as PushManager.subscribe's applicationServerKey."
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "VapidPublicKey"
       },
       "Verdict": {
         "properties": {

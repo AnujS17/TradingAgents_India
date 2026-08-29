@@ -37,6 +37,9 @@ dependencies = [
     "typing-extensions>=4.14.0",
     "yfinance>=0.2.63",
     "jugaad-data>=0.35.2",
+    "pywebpush>=2.0.0",
+    "fpdf2>=2.7.0",
+    "openpyxl>=3.1.0",
 ]
 
 [project.scripts]

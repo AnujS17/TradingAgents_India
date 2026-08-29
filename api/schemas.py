@@ -268,6 +268,28 @@ class RunAccepted(BaseModel):
     )
 
 
+class PushSubscriptionKeys(BaseModel):
+    """The `keys` object of a browser PushSubscription.toJSON()."""
+
+    p256dh: str
+    auth: str
+
+
+class PushSubscribeRequest(BaseModel):
+    """A browser PushSubscription, exactly as PushSubscription.toJSON()
+    serialises it -- passed straight through, no reshaping on the client."""
+
+    endpoint: str = Field(min_length=1)
+    keys: PushSubscriptionKeys
+
+
+class VapidPublicKey(BaseModel):
+    key: str = Field(
+        description="URL-safe base64, uncompressed EC point -- pass directly "
+        "as PushManager.subscribe's applicationServerKey."
+    )
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str

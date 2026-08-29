@@ -149,6 +149,31 @@ class RunEvent(Base):
     )
 
 
+class PushSubscription(Base):
+    """A browser's Web Push subscription for one run's completion.
+
+    Keyed on run_id, not a user id -- there are no accounts. Anyone with the
+    run's page open who grants notification permission gets one row here;
+    several browsers/devices can each have their own row for the same run.
+    Deleted once used (api.worker sends and clears together) so this table
+    never accumulates rows for runs that already notified, or that never
+    reached a terminal state (a run genuinely stuck 'running' forever is a
+    different bug, not something this table should grow to reflect).
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    # The three fields of a browser PushSubscription's JSON representation
+    # (endpoint + keys.p256dh + keys.auth) -- exactly what pywebpush's
+    # subscription_info parameter needs, no reshaping required.
+    endpoint: Mapped[str] = mapped_column(Text)
+    p256dh: Mapped[str] = mapped_column(Text)
+    auth: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 def _database_url() -> str:
     settings = get_settings()
     if settings.database_url:

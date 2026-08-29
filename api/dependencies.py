@@ -14,7 +14,7 @@ from typing import Annotated, Protocol
 
 from fastapi import Depends
 
-from api.db import new_run_id
+from api.db import PushSubscription, new_run_id
 from api.schemas import (
     AnalysisProfile,
     RunDetail,
@@ -78,6 +78,14 @@ class RunStore(Protocol):
 
     async def get_events_since(self, run_id: str, after_seq: int) -> list[RunEventOut]: ...
 
+    async def add_push_subscription(
+        self, run_id: str, endpoint: str, p256dh: str, auth: str
+    ) -> None: ...
+
+    async def get_push_subscriptions(self, run_id: str) -> list[PushSubscription]: ...
+
+    async def clear_push_subscriptions(self, run_id: str) -> None: ...
+
 
 def _rating_of(run: RunDetail) -> str | None:
     return run.verdict.rating if run.verdict is not None else None
@@ -93,6 +101,7 @@ class InMemoryRunStore:
 
     def __init__(self) -> None:
         self._runs: dict[str, RunDetail] = {}
+        self._push_subscriptions: dict[str, list[PushSubscription]] = {}
 
     @staticmethod
     def _key(ticker: str, analysis_date: Date, profile: AnalysisProfile) -> str:
@@ -284,6 +293,25 @@ class InMemoryRunStore:
         # nothing to return regardless of run_id or after_seq. An empty list
         # is the honest answer, not a stub — do not fabricate events here.
         return []
+
+    async def add_push_subscription(
+        self, run_id: str, endpoint: str, p256dh: str, auth: str
+    ) -> None:
+        self._push_subscriptions.setdefault(run_id, []).append(
+            PushSubscription(
+                run_id=run_id,
+                endpoint=endpoint,
+                p256dh=p256dh,
+                auth=auth,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+    async def get_push_subscriptions(self, run_id: str) -> list[PushSubscription]:
+        return list(self._push_subscriptions.get(run_id, []))
+
+    async def clear_push_subscriptions(self, run_id: str) -> None:
+        self._push_subscriptions.pop(run_id, None)
 
 
 _store: RunStore | None = None
