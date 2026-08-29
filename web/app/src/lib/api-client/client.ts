@@ -1,9 +1,12 @@
+import { getToken } from 'next-auth/jwt';
+
 import type { components } from './types.gen';
 
 export type RunDetail = components['schemas']['RunDetail'];
 export type RunSummary = components['schemas']['RunSummary'];
 export type RunHistory = components['schemas']['RunHistory'];
 export type RunAccepted = components['schemas']['RunAccepted'];
+export type VapidPublicKey = components['schemas']['VapidPublicKey'];
 export type Verdict = components['schemas']['Verdict'];
 export type Reports = components['schemas']['Reports'];
 export type NewsSource = components['schemas']['NewsSource'];
@@ -14,6 +17,35 @@ const API_BASE_URL =
   typeof window === 'undefined'
     ? process.env.API_BASE_URL ?? 'http://127.0.0.1:8000'
     : process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
+
+/** The one function every exported call below routes through. Attaches
+ * the signed-in user's bearer token, working in both contexts this file
+ * is imported from: a Server Component (no `window`, reads the request's
+ * own cookies via next-auth/jwt) and a Client Component (has `window`,
+ * asks next-auth/react for the current session). */
+async function getBearerToken(): Promise<string | null> {
+  if (typeof window === 'undefined') {
+    // Server Component / Route Handler context. NEXTAUTH_SECRET must be
+    // set for this to return anything -- see .env.example.
+    const { headers, cookies } = await import('next/headers');
+    const token = await getToken({
+      req: { headers: await headers(), cookies: await cookies() } as never,
+      secret: process.env.NEXTAUTH_SECRET,
+      raw: true,
+    });
+    return (token as unknown as string) ?? null;
+  }
+  const { getSession } = await import('next-auth/react');
+  const session = await getSession();
+  return (session as (typeof session & { accessToken?: string }) | null)?.accessToken ?? null;
+}
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await getBearerToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -48,7 +80,7 @@ export interface AnalyzePayload {
 }
 
 export async function analyzeRun(payload: AnalyzePayload): Promise<AnalyzeResult> {
-  const res = await fetch(`${API_BASE_URL}/analyze`, {
+  const res = await apiFetch('/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -69,7 +101,7 @@ export async function analyzeRun(payload: AnalyzePayload): Promise<AnalyzeResult
 }
 
 export async function getRun(id: string): Promise<RunDetail> {
-  const res = await fetch(`${API_BASE_URL}/runs/${id}`, { cache: 'no-store' });
+  const res = await apiFetch(`/runs/${id}`, { cache: 'no-store' });
   if (res.status === 404) throw new ApiError(404, 'Run not found');
   if (!res.ok) throw new ApiError(res.status, `Failed to fetch run ${id}`);
   return (await res.json()) as RunDetail;
@@ -83,8 +115,8 @@ export async function getRunByTicker(
   analysisDate: string,
   profile: AnalysisProfile = 'fast',
 ): Promise<RunDetail | null> {
-  const url = `${API_BASE_URL}/runs/${encodeURIComponent(ticker)}/${analysisDate}?profile=${profile}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const url = `/runs/${encodeURIComponent(ticker)}/${analysisDate}?profile=${profile}`;
+  const res = await apiFetch(url, { cache: 'no-store' });
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `Failed to fetch ${ticker} ${analysisDate}`);
   return (await res.json()) as RunDetail;
@@ -95,8 +127,8 @@ export async function getRunHistory(
   analysisDate: string,
   profile: AnalysisProfile = 'fast',
 ): Promise<RunHistory | null> {
-  const url = `${API_BASE_URL}/runs/${encodeURIComponent(ticker)}/${analysisDate}/history?profile=${profile}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const url = `/runs/${encodeURIComponent(ticker)}/${analysisDate}/history?profile=${profile}`;
+  const res = await apiFetch(url, { cache: 'no-store' });
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `Failed to fetch history for ${ticker} ${analysisDate}`);
   return (await res.json()) as RunHistory;
@@ -106,7 +138,7 @@ export async function getRunHistory(
  * own docstring. 404 covers both "no such run" and "already finished";
  * either way there is nothing left to stop. */
 export async function stopRun(id: string): Promise<RunDetail> {
-  const res = await fetch(`${API_BASE_URL}/runs/${id}/stop`, { method: 'POST' });
+  const res = await apiFetch(`/runs/${id}/stop`, { method: 'POST' });
   if (res.status === 404) {
     throw new ApiError(404, 'Run not found, or it has already finished');
   }
@@ -119,7 +151,7 @@ export async function stopRun(id: string): Promise<RunDetail> {
  * failed one in place. 404 covers both "no such run" and "that run didn't
  * fail"; either way there's nothing to resume. */
 export async function resumeRun(id: string): Promise<RunAccepted> {
-  const res = await fetch(`${API_BASE_URL}/runs/${id}/resume`, { method: 'POST' });
+  const res = await apiFetch(`/runs/${id}/resume`, { method: 'POST' });
   if (res.status === 404) {
     throw new ApiError(404, 'Run not found, or it did not fail');
   }
@@ -132,6 +164,43 @@ export async function resumeRun(id: string): Promise<RunAccepted> {
   return (await res.json()) as RunAccepted;
 }
 
+export async function getVapidPublicKey(): Promise<string> {
+  const res = await apiFetch('/push/vapid-public-key');
+  if (!res.ok) throw new ApiError(res.status, 'Failed to fetch the push public key');
+  const body = (await res.json()) as VapidPublicKey;
+  return body.key;
+}
+
+/** Registers a browser PushSubscription for one run's completion -- pass
+ * `subscription.toJSON()` directly, its shape matches the endpoint body
+ * exactly. 404 means the run doesn't exist or already finished. */
+export async function subscribeRun(
+  id: string,
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+): Promise<void> {
+  const res = await apiFetch(`/runs/${id}/subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(subscription),
+  });
+  if (res.status === 404) {
+    throw new ApiError(404, 'Run not found, or it has already finished');
+  }
+  if (!res.ok) throw new ApiError(res.status, `Failed to subscribe to run ${id}`);
+}
+
+/** Plain download URLs, not fetch wrappers -- the browser handles the
+ * download natively via the endpoint's Content-Disposition header, so these
+ * are meant for a bare `<a href>`, not a client-side request. Kept here
+ * rather than built inline at each call site so API_BASE_URL stays owned by
+ * this one module. */
+export function exportPdfUrl(id: string): string {
+  return `${API_BASE_URL}/runs/${id}/export.pdf`;
+}
+export function exportExcelUrl(id: string): string {
+  return `${API_BASE_URL}/runs/${id}/export.xlsx`;
+}
+
 export async function listRuns(
   params: { ticker?: string; limit?: number; offset?: number } = {},
 ): Promise<RunSummary[]> {
@@ -141,7 +210,7 @@ export async function listRuns(
   if (params.offset) search.set('offset', String(params.offset));
   const qs = search.toString();
 
-  const res = await fetch(`${API_BASE_URL}/runs${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
+  const res = await apiFetch(`/runs${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
   if (!res.ok) throw new ApiError(res.status, 'Failed to list runs');
   return (await res.json()) as RunSummary[];
 }

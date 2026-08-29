@@ -1,5 +1,19 @@
+// @vitest-environment node
+//
+// Forces the Server Component branch of apiFetch's getBearerToken (reads via
+// next-auth/jwt's getToken) rather than the Client Component branch
+// (next-auth/react's getSession, which -- unmocked -- makes a real fetch('/api/auth/session')
+// call that collides with this file's own global.fetch stub and consumes its
+// mocked Response body out from under the assertions below).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { analyzeRun, ApiError, getRun, getRunByTicker, RateLimitError } from '@/lib/api-client/client';
+
+vi.mock('next-auth/jwt', () => ({ getToken: vi.fn().mockResolvedValue(null) }));
+vi.mock('next-auth/react', () => ({ getSession: vi.fn().mockResolvedValue(null) }));
+vi.mock('next/headers', () => ({
+  headers: vi.fn().mockResolvedValue(new Headers()),
+  cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
+}));
 
 function jsonResponse(body: unknown, init: { status: number; headers?: Record<string, string> }) {
   return new Response(JSON.stringify(body), {
