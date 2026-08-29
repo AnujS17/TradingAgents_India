@@ -182,7 +182,7 @@ def test_a_failed_run_does_not_satisfy_the_cache(store, monkeypatch):
         await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
         claimed = await store.claim_next_run()
         await execute_run(store, claimed)
-        return await store.find("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        return await store.find("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner=None)
 
     assert _run(scenario()) is None
 
@@ -371,7 +371,7 @@ def test_history_returns_correct_run_summaries(store, monkeypatch):
         await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
         claimed = await store.claim_next_run()
         await execute_run(store, claimed)
-        return await store.history("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        return await store.history("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner=None)
 
     history = _run(scenario())
     assert history.run_count == 1
@@ -403,7 +403,7 @@ def test_list_returns_correct_run_summaries(store, monkeypatch):
         await store.create("TCS.NS", DAY, AnalysisProfile.FAST)
         claimed = await store.claim_next_run()
         await execute_run(store, claimed)
-        return await store.list(ticker="TCS.NS", limit=10, offset=0)
+        return await store.list(ticker="TCS.NS", limit=10, offset=0, owner=None)
 
     summaries = _run(scenario())
     assert len(summaries) == 1

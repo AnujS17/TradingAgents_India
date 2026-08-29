@@ -157,6 +157,7 @@ class InMemoryRunStore:
             status=RunStatus.QUEUED,
             created_at=datetime.now(timezone.utc),
             requested_time_horizon=original.requested_time_horizon,
+            user_id=original.user_id,
         )
         self._runs[run.id] = run
         return run

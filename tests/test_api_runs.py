@@ -8,6 +8,7 @@ id; everything else reads state.
 import pytest
 from fastapi.testclient import TestClient
 
+from api.auth import CurrentUser, get_current_user
 from api.dependencies import InMemoryRunStore, get_run_store
 from api.main import create_app
 from api.schemas import RunStatus
@@ -22,6 +23,9 @@ def client():
     # every cache lookup misses.
     store = InMemoryRunStore()
     app.dependency_overrides[get_run_store] = lambda: store
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id="test-user", role="user", tier="free"
+    )
     with TestClient(app) as test_client:
         yield test_client
 
@@ -167,7 +171,7 @@ def test_failed_runs_do_not_satisfy_the_cache():
         store = InMemoryRunStore()
         run = await store.create("SIEMENS.NS", date(2026, 8, 12), AnalysisProfile.FAST)
         store._runs[run.id] = run.model_copy(update={"status": RunStatus.FAILED})
-        return await store.find("SIEMENS.NS", date(2026, 8, 12), AnalysisProfile.FAST)
+        return await store.find("SIEMENS.NS", date(2026, 8, 12), AnalysisProfile.FAST, owner=None)
 
     assert asyncio.run(scenario()) is None
 
@@ -290,7 +294,7 @@ def test_disagreeing_repeat_runs_are_flagged_as_contested():
         store._runs[b.id] = b.model_copy(
             update={"status": RunStatus.COMPLETED, "verdict": Verdict(rating="Underweight")}
         )
-        return await store.history("SIEMENS.NS", day, AnalysisProfile.FAST)
+        return await store.history("SIEMENS.NS", day, AnalysisProfile.FAST, owner=None)
 
     history = asyncio.run(scenario())
     assert history.verdict_is_contested is True
@@ -314,7 +318,7 @@ def test_agreeing_repeat_runs_are_not_flagged():
             store._runs[run.id] = run.model_copy(
                 update={"status": RunStatus.COMPLETED, "verdict": Verdict(rating="Hold")}
             )
-        return await store.history("TCS.NS", day, AnalysisProfile.FAST)
+        return await store.history("TCS.NS", day, AnalysisProfile.FAST, owner=None)
 
     assert asyncio.run(scenario()).verdict_is_contested is False
 
@@ -336,7 +340,7 @@ def test_find_prefers_a_completed_run_over_one_still_executing():
             update={"status": RunStatus.COMPLETED, "verdict": Verdict(rating="Hold")}
         )
         await store.create("TCS.NS", day, AnalysisProfile.FAST)  # newer, still queued
-        return await store.find("TCS.NS", day, AnalysisProfile.FAST), done.id
+        return await store.find("TCS.NS", day, AnalysisProfile.FAST, owner=None), done.id
 
     found, done_id = asyncio.run(scenario())
     assert found.id == done_id

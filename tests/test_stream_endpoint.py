@@ -10,6 +10,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
+from api.auth import CurrentUser, get_current_user
 from api.dependencies import InMemoryRunStore, get_run_store
 from api.main import create_app
 from api.schemas import AnalysisProfile, RunStatus
@@ -28,6 +29,9 @@ def client(store):
     # reference to it, needed to force a run into "completed" without a
     # real engine run.
     app.dependency_overrides[get_run_store] = lambda: store
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id="test-user", role="user", tier="free"
+    )
     with TestClient(app) as test_client:
         yield test_client
 
@@ -42,7 +46,11 @@ def _create_completed_run(store: InMemoryRunStore) -> str:
     mark_completed of its own (that lives on SqlRunStore), and the run must
     already be completed before the stream is opened -- otherwise the
     endpoint's poll loop never sees a terminal status and the test hangs."""
-    created = _run(store.create("SIEMENS.NS", date(2026, 8, 1), AnalysisProfile.FAST))
+    created = _run(
+        store.create(
+            "SIEMENS.NS", date(2026, 8, 1), AnalysisProfile.FAST, owner="test-user"
+        )
+    )
     store._runs[created.id].status = RunStatus.COMPLETED
     return created.id
 

@@ -216,6 +216,7 @@ def test_clear_push_subscriptions_removes_only_that_runs_rows(store):
 def client_and_store(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
+    from api.auth import CurrentUser, get_current_user
     from api.dependencies import InMemoryRunStore, get_run_store
     from api.main import create_app
 
@@ -225,6 +226,9 @@ def client_and_store(tmp_path, monkeypatch):
     app = create_app()
     run_store = InMemoryRunStore()
     app.dependency_overrides[get_run_store] = lambda: run_store
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id="test-user", role="user", tier="free"
+    )
     with TestClient(app) as test_client:
         yield test_client, run_store
 

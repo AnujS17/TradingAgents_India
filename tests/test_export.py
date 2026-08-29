@@ -212,12 +212,16 @@ def test_build_excel_does_not_raise_on_a_bare_run():
 def client_and_store():
     from fastapi.testclient import TestClient
 
+    from api.auth import CurrentUser, get_current_user
     from api.dependencies import InMemoryRunStore, get_run_store
     from api.main import create_app
 
     app = create_app()
     run_store = InMemoryRunStore()
     app.dependency_overrides[get_run_store] = lambda: run_store
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id="test-user", role="user", tier="free"
+    )
     with TestClient(app) as test_client:
         yield test_client, run_store
 

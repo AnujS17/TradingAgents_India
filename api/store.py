@@ -163,6 +163,7 @@ class SqlRunStore:
                 requested_by=requested_by,
                 requested_time_horizon=original.requested_time_horizon,
                 resume=True,
+                user_id=original.user_id,
             )
             session.add(row)
             await session.commit()

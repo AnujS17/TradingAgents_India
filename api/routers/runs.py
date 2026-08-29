@@ -16,6 +16,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
+from api.auth import CurrentUser, CurrentUserDep
 from api.dependencies import RunStoreDep
 from api.ratelimit import client_identity, enforce_budget
 from api.schemas import (
@@ -31,6 +32,17 @@ from api.schemas import (
 )
 
 router = APIRouter()
+
+
+def _authorize_run_access(run, current_user: CurrentUser) -> None:
+    """The one ownership gate every per-run route calls. 404, not 403 --
+    confirming a run exists to someone who doesn't own it would leak which
+    tickers other users have analysed."""
+    if current_user.role == "admin":
+        return
+    if run.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
 
 # Rough client-facing guidance only. Measured on SIEMENS.NS 2026-08-12:
 # fast 222s, detailed 801s. Not a promise, and not used for timeouts.
@@ -62,6 +74,7 @@ async def request_analysis(
     store: RunStoreDep,
     request: Request,
     response: Response,
+    current_user: CurrentUserDep,
 ) -> RunAccepted:
     """Queue an analysis, or hand back the existing one.
 
@@ -81,7 +94,7 @@ async def request_analysis(
     # day's inputs are snapshotted, so two runs read identical data and any
     # difference is the model telling you the call is borderline.
     if not payload.force:
-        existing = await store.find(payload.ticker, analysis_date, payload.profile)
+        existing = await store.find(payload.ticker, analysis_date, payload.profile, owner=current_user.id)
         if existing is not None:
             response.status_code = status.HTTP_200_OK
             return RunAccepted(
@@ -104,6 +117,7 @@ async def request_analysis(
         refresh_data=payload.refresh_data,
         requested_by=requested_by,
         time_horizon=payload.time_horizon,
+        owner=current_user.id,
     )
     return RunAccepted(
         id=run.id,
@@ -114,7 +128,7 @@ async def request_analysis(
 
 
 @router.post("/runs/{run_id}/stop", response_model=RunDetail, tags=["runs"])
-async def stop_run(run_id: str, store: RunStoreDep) -> RunDetail:
+async def stop_run(run_id: str, store: RunStoreDep, current_user: CurrentUserDep) -> RunDetail:
     """Ask a queued or running analysis to stop.
 
     Cooperative, not instant, for a running analysis: the worker checks a
@@ -127,6 +141,10 @@ async def stop_run(run_id: str, store: RunStoreDep) -> RunDetail:
     caller cannot stop what is not running either way, and doesn't need to
     distinguish the two to know that.
     """
+    run = await store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _authorize_run_access(run, current_user)
     updated = await store.request_stop(run_id)
     if updated is None:
         raise HTTPException(
@@ -142,7 +160,7 @@ async def stop_run(run_id: str, store: RunStoreDep) -> RunDetail:
     tags=["runs"],
 )
 async def resume_run(
-    run_id: str, store: RunStoreDep, request: Request
+    run_id: str, store: RunStoreDep, request: Request, current_user: CurrentUserDep
 ) -> RunAccepted:
     """Continue a failed run instead of starting over from scratch.
 
@@ -161,6 +179,14 @@ async def resume_run(
     /analyze call: continuing a run still spends real LLM calls for
     whatever's left.
     """
+    original = await store.get(run_id)
+    if original is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Run not found, or it did not fail (only a failed run can be resumed)",
+        )
+    _authorize_run_access(original, current_user)
+
     requested_by = client_identity(request)
     await enforce_budget(store, requested_by)
 
@@ -184,7 +210,7 @@ async def resume_run(
     tags=["runs"],
 )
 async def subscribe_to_run(
-    run_id: str, payload: PushSubscribeRequest, store: RunStoreDep
+    run_id: str, payload: PushSubscribeRequest, store: RunStoreDep, current_user: CurrentUserDep
 ) -> None:
     """Register a browser push subscription for one run's completion.
 
@@ -202,6 +228,7 @@ async def subscribe_to_run(
     run = await store.get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    _authorize_run_access(run, current_user)
     if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
         raise HTTPException(
             status_code=404, detail="Run has already finished; nothing left to notify about"
@@ -221,6 +248,7 @@ async def get_run_history(
     ticker: str,
     analysis_date: Date,
     store: RunStoreDep,
+    current_user: CurrentUserDep,
     profile: AnalysisProfile = AnalysisProfile.FAST,
 ) -> RunHistory:
     """Every analysis of one question, so repeat runs can be compared.
@@ -229,23 +257,27 @@ async def get_run_history(
     Hiding that would be the dishonest option — the runs read identical data,
     so a split is real information about how balanced the evidence is.
     """
-    history = await store.history(ticker.strip().upper(), analysis_date, profile)
+    owner = None if current_user.role == "admin" else current_user.id
+    history = await store.history(ticker.strip().upper(), analysis_date, profile, owner=owner)
     if history is None:
         raise HTTPException(status_code=404, detail="No analyses for that ticker and date")
     return history
 
 
 @router.get("/runs/{run_id}", response_model=RunDetail, tags=["runs"])
-async def get_run(run_id: str, store: RunStoreDep) -> RunDetail:
+async def get_run(run_id: str, store: RunStoreDep, current_user: CurrentUserDep) -> RunDetail:
     """Poll a run. Carries reports only once status is ``completed``."""
     run = await store.get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    _authorize_run_access(run, current_user)
     return run
 
 
 @router.get("/runs/{run_id}/stream", tags=["runs"])
-async def stream_run(run_id: str, store: RunStoreDep, request: Request) -> StreamingResponse:
+async def stream_run(
+    run_id: str, store: RunStoreDep, request: Request, current_user: CurrentUserDep
+) -> StreamingResponse:
     """Server-Sent Events: token-level live view of an in-progress run.
 
     Honors Last-Event-ID (sent automatically by a reconnecting browser
@@ -258,6 +290,11 @@ async def stream_run(run_id: str, store: RunStoreDep, request: Request) -> Strea
     one must come first or every "stream" would be swallowed as a bogus
     analysis_date and 422 instead of streaming.
     """
+    run = await store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _authorize_run_access(run, current_user)
+
     last_seq = int(request.headers.get("Last-Event-ID", "0") or "0")
 
     async def event_source():
@@ -287,7 +324,7 @@ def _export_filename(run: RunDetail, extension: str) -> str:
 
 
 @router.get("/runs/{run_id}/export.pdf", tags=["runs"])
-async def export_run_pdf(run_id: str, store: RunStoreDep) -> Response:
+async def export_run_pdf(run_id: str, store: RunStoreDep, current_user: CurrentUserDep) -> Response:
     """A one-page-plus PDF: the verdict card's fields, then every available
     report grouped the same way ReportsRecord.tsx groups them on screen.
 
@@ -304,7 +341,10 @@ async def export_run_pdf(run_id: str, store: RunStoreDep) -> Response:
     from api.export import build_pdf
 
     run = await store.get(run_id)
-    if run is None or run.status != RunStatus.COMPLETED:
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found, or it has not completed yet")
+    _authorize_run_access(run, current_user)
+    if run.status != RunStatus.COMPLETED:
         raise HTTPException(
             status_code=404, detail="Run not found, or it has not completed yet"
         )
@@ -317,7 +357,7 @@ async def export_run_pdf(run_id: str, store: RunStoreDep) -> Response:
 
 
 @router.get("/runs/{run_id}/export.xlsx", tags=["runs"])
-async def export_run_excel(run_id: str, store: RunStoreDep) -> Response:
+async def export_run_excel(run_id: str, store: RunStoreDep, current_user: CurrentUserDep) -> Response:
     """A Summary sheet (the verdict card's fields) plus a Full reports sheet
     (one row per available report: group, label, word count, content).
 
@@ -326,7 +366,10 @@ async def export_run_excel(run_id: str, store: RunStoreDep) -> Response:
     from api.export import build_excel
 
     run = await store.get(run_id)
-    if run is None or run.status != RunStatus.COMPLETED:
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found, or it has not completed yet")
+    _authorize_run_access(run, current_user)
+    if run.status != RunStatus.COMPLETED:
         raise HTTPException(
             status_code=404, detail="Run not found, or it has not completed yet"
         )
@@ -345,6 +388,7 @@ async def get_run_by_ticker(
     ticker: str,
     analysis_date: Date,
     store: RunStoreDep,
+    current_user: CurrentUserDep,
     profile: AnalysisProfile = AnalysisProfile.FAST,
 ) -> RunDetail:
     """Fetch a completed analysis by what it is *about* rather than by job id.
@@ -352,7 +396,8 @@ async def get_run_by_ticker(
     This is the endpoint a UI actually uses on a stock page: it does not know
     a run id, only which company and day the user is looking at.
     """
-    run = await store.find(ticker.strip().upper(), analysis_date, profile)
+    owner = None if current_user.role == "admin" else current_user.id
+    run = await store.find(ticker.strip().upper(), analysis_date, profile, owner=owner)
     if run is None:
         raise HTTPException(
             status_code=404,
@@ -364,12 +409,15 @@ async def get_run_by_ticker(
 @router.get("/runs", response_model=list[RunSummary], tags=["runs"])
 async def list_runs(
     store: RunStoreDep,
+    current_user: CurrentUserDep,
     ticker: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[RunSummary]:
+    owner = None if current_user.role == "admin" else current_user.id
     return await store.list(
         ticker=ticker.strip().upper() if ticker else None,
         limit=limit,
         offset=offset,
+        owner=owner,
     )
