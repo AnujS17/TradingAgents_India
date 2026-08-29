@@ -89,6 +89,12 @@ class Run(Base):
     # everywhere it's read, same convention as stop_requested.
     resume: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Owner of this run. Nullable, permanently -- not a migration
+    # convenience: pre-auth rows are backfilled onto the first admin (see
+    # api.auth.get_or_create_user), but a future system/scheduled run
+    # still has no human owner, and this column must accept that.
+    user_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
     __table_args__ = (
         # The cache lookup: "has this exact question been answered?" Sorted by
         # created_at so "newest run for this question" is an index scan.
@@ -211,6 +217,8 @@ async def create_tables() -> None:
             await conn.execute(text("ALTER TABLE runs ADD COLUMN requested_time_horizon VARCHAR(64)"))
         if "resume" not in existing_columns:
             await conn.execute(text("ALTER TABLE runs ADD COLUMN resume BOOLEAN DEFAULT 0"))
+        if "user_id" not in existing_columns:
+            await conn.execute(text("ALTER TABLE runs ADD COLUMN user_id VARCHAR(32)"))
 
 
 def utcnow() -> datetime:
