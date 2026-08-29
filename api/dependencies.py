@@ -185,7 +185,19 @@ class InMemoryRunStore:
         run = self._runs.get(run_id)
         if run is None:
             return None
-        siblings = self._siblings(run.ticker, run.analysis_date, run.profile)
+        # Scoped to the row's OWN owner, not left unfiltered. Unfiltered
+        # siblings would count every user's runs of this ticker/date/profile
+        # into run_count and let a stranger's rating flip
+        # verdict_is_contested -- the aggregates on a run's own detail page
+        # must reflect only that run owner's history with the same
+        # question, matching find/history's owner-scoping below. `None ==
+        # None` here correctly groups a legacy unclaimed run only with
+        # other unclaimed runs, never with anyone's claimed ones.
+        siblings = [
+            r
+            for r in self._siblings(run.ticker, run.analysis_date, run.profile)
+            if getattr(r, "user_id", None) == run.user_id
+        ]
         return run.model_copy(
             update={
                 "run_count": len(siblings),

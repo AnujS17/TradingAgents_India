@@ -174,9 +174,21 @@ class SqlRunStore:
             row = await session.get(Run, run_id)
             if row is None:
                 return None
-            siblings = await self._siblings(
+            # Fetched via _siblings' unfiltered default (owner access
+            # control for the ROW ITSELF is the router's job, not this
+            # method's), then post-filtered here to the row's own owner --
+            # same pattern find/history use below. Passing row.user_id
+            # straight into _siblings' owner= would be wrong: _siblings
+            # treats owner=None as "no filter" (that's what the router's
+            # own get() call relies on), so a legacy unclaimed row
+            # (user_id=None) would silently pull in every user's runs
+            # instead of only the other unclaimed ones. Filtering in Python
+            # after the fact avoids that ambiguity entirely: `None == None`
+            # here correctly means "unclaimed matches unclaimed only."
+            all_siblings = await self._siblings(
                 session, row.ticker, row.analysis_date, AnalysisProfile(row.profile)
             )
+            siblings = [r for r in all_siblings if r.user_id == row.user_id]
             return _to_detail(row).model_copy(
                 update={
                     "run_count": len(siblings),

@@ -3,6 +3,15 @@ import GoogleProvider from 'next-auth/providers/google';
 import jwt from 'jsonwebtoken';
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days, matches the default NextAuth session lifetime
+// The httpOnly session COOKIE living 30 days is fine -- it's never
+// readable by page JavaScript. The bearer TOKEN minted below is different:
+// session() (client-side path) hands it to any script running on the
+// page via session.accessToken, and there is no server-side revocation
+// list for it (a stolen 30-day-lived token would be usable for 30 days
+// no matter what). getSession() is called fresh on every apiFetch anyway
+// (see client.ts), so a short expiry here costs nothing functionally and
+// bounds an XSS's blast radius to minutes, not weeks.
+const BEARER_TOKEN_MAX_AGE_SECONDS = 15 * 60; // 15 minutes
 
 /** Same signing call jwt.encode below makes -- factored out so session()
  * can mint an equally-valid bearer token for client-side use (see the
@@ -10,12 +19,19 @@ const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days, matches the defau
  * required to be byte-identical to whatever's in the session cookie --
  * only to be a validly-signed token carrying the same claims, which any
  * fresh call to this produces regardless of the "exp" drifting a few
- * seconds from the cookie's own. */
-function signBearerToken(claims: { sub?: string; role?: string; tier?: string }): string {
+ * seconds from the cookie's own. `expiresInSeconds` defaults to the full
+ * session lifetime for jwt.encode's own use (that token stays server-side,
+ * in the httpOnly cookie); session() below passes the much shorter
+ * BEARER_TOKEN_MAX_AGE_SECONDS instead, since that copy is JS-readable. */
+function signBearerToken(
+  claims: { sub?: string; role?: string; tier?: string },
+  expiresInSeconds: number = SESSION_MAX_AGE_SECONDS,
+  secret: string = process.env.NEXTAUTH_SECRET as string,
+): string {
   return jwt.sign(
     { sub: claims.sub, role: claims.role, tier: claims.tier },
-    process.env.NEXTAUTH_SECRET as string,
-    { algorithm: 'HS256', expiresIn: SESSION_MAX_AGE_SECONDS },
+    secret,
+    { algorithm: 'HS256', expiresIn: expiresInSeconds },
   );
 }
 
@@ -45,8 +61,12 @@ export const authOptions: NextAuthOptions = {
   // is not optional hardening, the default token is simply not usable as
   // a cross-service bearer token without it.
   jwt: {
-    async encode({ token }) {
-      return signBearerToken({ sub: token?.sub, role: token?.role as string, tier: token?.tier as string });
+    async encode({ token, secret }) {
+      return signBearerToken(
+        { sub: token?.sub, role: token?.role as string, tier: token?.tier as string },
+        SESSION_MAX_AGE_SECONDS,
+        secret as string,
+      );
     },
     async decode({ secret, token }) {
       if (!token) return null;
@@ -77,11 +97,14 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       return {
         ...session,
-        accessToken: signBearerToken({
-          sub: token?.sub,
-          role: token?.role as string,
-          tier: token?.tier as string,
-        }),
+        accessToken: signBearerToken(
+          {
+            sub: token?.sub,
+            role: token?.role as string,
+            tier: token?.tier as string,
+          },
+          BEARER_TOKEN_MAX_AGE_SECONDS,
+        ),
       };
     },
   },

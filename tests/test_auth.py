@@ -9,7 +9,7 @@ import pytest
 
 from api.auth import InvalidToken, decode_token
 
-SECRET = "test-secret-do-not-use-in-prod"
+SECRET = "test-secret-do-not-use-in-prod-32chars"
 
 
 def _token(payload: dict, secret: str = SECRET, algorithm: str = "HS256", **jwt_kwargs) -> str:
@@ -258,3 +258,25 @@ def test_two_concurrent_logins_with_the_same_google_sub_do_not_raise(sessionmake
 
     first, second = _run(scenario())
     assert first.id == second.id
+
+
+@pytest.mark.unit
+def test_settings_rejects_a_too_short_jwt_secret(monkeypatch):
+    """An empty or short TRADINGAGENTS_API_JWT_SECRET must fail app startup,
+    not boot successfully with a forgeable secret. The most likely real
+    misconfiguration is an *unfilled* .env line (empty string), which a
+    bare `jwt_secret: str` field would accept -- min_length=32 closes
+    that gap on top of the pre-existing missing-var check."""
+    from pydantic import ValidationError
+
+    from api.settings import Settings
+
+    monkeypatch.delenv("TRADINGAGENTS_API_JWT_SECRET", raising=False)
+    with pytest.raises(ValidationError):
+        Settings(jwt_secret="")
+
+    with pytest.raises(ValidationError):
+        Settings(jwt_secret="too-short")
+
+    # 32 chars exactly is the floor, not rejected.
+    Settings(jwt_secret="x" * 32)

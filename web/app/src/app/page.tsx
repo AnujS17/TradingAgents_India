@@ -6,6 +6,7 @@ import { TrustStrip } from '@/components/landing/TrustStrip';
 import { PipelineStack } from '@/components/landing/PipelineStack';
 import { UseCases } from '@/components/landing/UseCases';
 import { Deck } from '@/components/landing/Deck';
+import { CallShowcase } from '@/components/landing/CallShowcase';
 import { LiveSplitFeature } from '@/components/landing/LiveSplitFeature';
 import { Faq } from '@/components/landing/Faq';
 import { CtaSection } from '@/components/landing/CtaSection';
@@ -13,7 +14,15 @@ import { RecentRunsSection } from '@/components/landing/RecentRunsSection';
 import { SiteFooter } from '@/components/landing/SiteFooter';
 
 export default async function HomePage() {
-  const recentRuns = await listRuns({ limit: 10 });
+  // GET /runs now requires a bearer token (Task 6). This page is
+  // deliberately public (proxy.ts's matcher excludes it on purpose, so a
+  // signed-out visitor can see what Bench is before signing in) -- a
+  // signed-out request here carries no token and 401s. Swallow that and
+  // fall back to an empty list rather than letting it throw during server
+  // render, which would replace the whole landing page with error.tsx.
+  // Any OTHER failure (network, 5xx) is worth the same fallback: a broken
+  // "recent runs" strip should never take down the page around it.
+  const recentRuns = await listRuns({ limit: 10 }).catch(() => []);
 
   return (
     <>
@@ -32,6 +41,7 @@ export default async function HomePage() {
         <PipelineStack />
         <UseCases />
         <Deck />
+        <CallShowcase />
         <LiveSplitFeature />
         <Faq />
         <CtaSection />

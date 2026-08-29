@@ -8,6 +8,7 @@ queue, limits) and is meaningless to a CLI or notebook caller.
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,7 +63,17 @@ class Settings(BaseSettings):
     # create_app -> get_settings()) -- so a missing secret fails closed at
     # boot, not open on the first request. Must match NEXTAUTH_SECRET on
     # the frontend exactly; they are the same value, not a keypair.
-    jwt_secret: str
+    #
+    # min_length=32 closes the gap a *missing* secret alone doesn't: the
+    # most likely real misconfiguration isn't an unset variable (that
+    # already fails loudly above) but an unfilled one -- copy
+    # .env.example to .env and forget to fill this line, and pydantic
+    # would otherwise accept "" as a perfectly valid str. PyJWT will
+    # happily HMAC-sign and -verify with an empty key, so an app that
+    # "just boots" on a blank secret is one where anyone can forge an
+    # admin-equivalent bearer token. 32 bytes matches PyJWT's own
+    # InsecureKeyLengthWarning threshold for HS256.
+    jwt_secret: str = Field(min_length=32)
 
     allowed_origins: list[str] = ["http://localhost:3000"]
     allowed_methods: list[str] = ["GET", "POST", "OPTIONS"]
