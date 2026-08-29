@@ -51,11 +51,21 @@ class RunStore(Protocol):
     async def get(self, run_id: str) -> RunDetail | None: ...
 
     async def find(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
+        self,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None,
+        bypass_owner_check: bool = False,
     ) -> RunDetail | None: ...
 
     async def history(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
+        self,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None,
+        bypass_owner_check: bool = False,
     ) -> RunHistory | None: ...
 
     async def count_runs_today(self, requested_by: str | None = None) -> int: ...
@@ -175,19 +185,26 @@ class InMemoryRunStore:
         )
 
     async def find(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
+        self,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None,
+        bypass_owner_check: bool = False,
     ) -> RunDetail | None:
         """Newest usable run, preferring a finished one.
 
         A completed run beats an in-flight one: a caller asking this question
         wants an answer now, and the run still executing will surface on its
         own once done.
+
+        ``bypass_owner_check`` is the admin escape hatch -- structurally
+        distinct from ``owner`` so ``owner=None`` alone can never be
+        mistaken for "no filter" (it still means "unclaimed rows only").
         """
-        siblings = [
-            r
-            for r in self._siblings(ticker, analysis_date, profile)
-            if getattr(r, "user_id", None) == owner
-        ]
+        siblings = self._siblings(ticker, analysis_date, profile)
+        if not bypass_owner_check:
+            siblings = [r for r in siblings if getattr(r, "user_id", None) == owner]
         if not siblings:
             return None
 
@@ -202,12 +219,16 @@ class InMemoryRunStore:
         )
 
     async def history(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
+        self,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None,
+        bypass_owner_check: bool = False,
     ) -> RunHistory | None:
         siblings = self._siblings(ticker, analysis_date, profile)
-        siblings = [
-            r for r in siblings if owner is None or getattr(r, "user_id", None) == owner
-        ]
+        if not bypass_owner_check:
+            siblings = [r for r in siblings if getattr(r, "user_id", None) == owner]
         if not siblings:
             return None
         return RunHistory(

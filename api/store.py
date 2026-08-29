@@ -185,13 +185,26 @@ class SqlRunStore:
             )
 
     async def find(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
+        self,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None,
+        bypass_owner_check: bool = False,
     ) -> RunDetail | None:
         """Newest usable run, preferring a finished one — a caller asking this
-        question wants an answer now, and an in-flight run surfaces later."""
+        question wants an answer now, and an in-flight run surfaces later.
+
+        ``bypass_owner_check`` is the admin escape hatch, and it is
+        deliberately a separate parameter rather than overloading ``owner``
+        with a second meaning: ``owner=None`` on its own still means "match
+        only unclaimed rows" (the Task 5 fix), never "everyone's runs" --
+        only ``bypass_owner_check=True`` skips the filter entirely.
+        """
         async with self._sessionmaker() as session:
             siblings = await self._siblings(session, ticker, analysis_date, profile)
-            siblings = [r for r in siblings if r.user_id == owner]
+            if not bypass_owner_check:
+                siblings = [r for r in siblings if r.user_id == owner]
             if not siblings:
                 return None
             completed = [r for r in siblings if r.status == RunStatus.COMPLETED.value]
@@ -205,11 +218,17 @@ class SqlRunStore:
             )
 
     async def history(
-        self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
+        self,
+        ticker: str,
+        analysis_date: Date,
+        profile: AnalysisProfile,
+        owner: str | None,
+        bypass_owner_check: bool = False,
     ) -> RunHistory | None:
         async with self._sessionmaker() as session:
             siblings = await self._siblings(session, ticker, analysis_date, profile)
-            siblings = [r for r in siblings if r.user_id == owner]
+            if not bypass_owner_check:
+                siblings = [r for r in siblings if r.user_id == owner]
             if not siblings:
                 return None
             return RunHistory(

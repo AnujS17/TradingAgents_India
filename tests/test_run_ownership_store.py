@@ -111,3 +111,53 @@ def test_history_with_owner_none_never_returns_another_users_run(sql_store):
     history = _run(scenario())
 
     assert history is None
+
+
+# --- bypass_owner_check (the admin escape hatch) --------------------------
+#
+# owner=None alone must never mean "no filter" for find/history -- that's
+# the regression the tests above guard. The admin path needs a DIFFERENT,
+# structurally distinct way to see everyone's runs: bypass_owner_check=True.
+
+
+@pytest.mark.unit
+def test_find_bypass_owner_check_returns_another_users_run(sql_store):
+    stores = [sql_store, InMemoryRunStore()]
+    for store in stores:
+        async def scenario(store=store):
+            created = await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="user-a")
+            found = await store.find(
+                "SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="admin-1", bypass_owner_check=True
+            )
+            return created, found
+
+        created, found = _run(scenario())
+        assert found is not None, f"{type(store).__name__} bypass_owner_check did not bypass"
+        assert found.id == created.id
+
+
+@pytest.mark.unit
+def test_history_bypass_owner_check_returns_another_users_run(sql_store):
+    stores = [sql_store, InMemoryRunStore()]
+    for store in stores:
+        async def scenario(store=store):
+            await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="user-a")
+            return await store.history(
+                "SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="admin-1", bypass_owner_check=True
+            )
+
+        history = _run(scenario())
+        assert history is not None, f"{type(store).__name__} bypass_owner_check did not bypass"
+        assert history.run_count == 1
+
+
+@pytest.mark.unit
+def test_find_bypass_owner_check_false_by_default_still_scopes_to_owner(sql_store):
+    """The default must stay exactly as strict as before this fix -- a
+    caller that forgets to pass bypass_owner_check gets the safe behavior,
+    not an accidental leak."""
+    async def scenario():
+        await sql_store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="user-a")
+        return await sql_store.find("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="user-b")
+
+    assert _run(scenario()) is None

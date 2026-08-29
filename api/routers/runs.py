@@ -34,7 +34,7 @@ from api.schemas import (
 router = APIRouter()
 
 
-def _authorize_run_access(run, current_user: CurrentUser) -> None:
+def _authorize_run_access(run: RunDetail, current_user: CurrentUser) -> None:
     """The one ownership gate every per-run route calls. 404, not 403 --
     confirming a run exists to someone who doesn't own it would leak which
     tickers other users have analysed."""
@@ -257,8 +257,13 @@ async def get_run_history(
     Hiding that would be the dishonest option — the runs read identical data,
     so a split is real information about how balanced the evidence is.
     """
-    owner = None if current_user.role == "admin" else current_user.id
-    history = await store.history(ticker.strip().upper(), analysis_date, profile, owner=owner)
+    history = await store.history(
+        ticker.strip().upper(),
+        analysis_date,
+        profile,
+        owner=current_user.id,
+        bypass_owner_check=(current_user.role == "admin"),
+    )
     if history is None:
         raise HTTPException(status_code=404, detail="No analyses for that ticker and date")
     return history
@@ -396,8 +401,13 @@ async def get_run_by_ticker(
     This is the endpoint a UI actually uses on a stock page: it does not know
     a run id, only which company and day the user is looking at.
     """
-    owner = None if current_user.role == "admin" else current_user.id
-    run = await store.find(ticker.strip().upper(), analysis_date, profile, owner=owner)
+    run = await store.find(
+        ticker.strip().upper(),
+        analysis_date,
+        profile,
+        owner=current_user.id,
+        bypass_owner_check=(current_user.role == "admin"),
+    )
     if run is None:
         raise HTTPException(
             status_code=404,
