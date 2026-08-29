@@ -189,7 +189,8 @@ class SqlRunStore:
         """Newest usable run, preferring a finished one — a caller asking this
         question wants an answer now, and an in-flight run surfaces later."""
         async with self._sessionmaker() as session:
-            siblings = await self._siblings(session, ticker, analysis_date, profile, owner)
+            siblings = await self._siblings(session, ticker, analysis_date, profile)
+            siblings = [r for r in siblings if r.user_id == owner]
             if not siblings:
                 return None
             completed = [r for r in siblings if r.status == RunStatus.COMPLETED.value]
@@ -206,7 +207,8 @@ class SqlRunStore:
         self, ticker: str, analysis_date: Date, profile: AnalysisProfile, owner: str | None
     ) -> RunHistory | None:
         async with self._sessionmaker() as session:
-            siblings = await self._siblings(session, ticker, analysis_date, profile, owner)
+            siblings = await self._siblings(session, ticker, analysis_date, profile)
+            siblings = [r for r in siblings if r.user_id == owner]
             if not siblings:
                 return None
             return RunHistory(

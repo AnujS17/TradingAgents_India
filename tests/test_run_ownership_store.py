@@ -87,3 +87,27 @@ def test_history_is_scoped_to_the_owner_too(sql_store):
 
     history = _run(scenario())
     assert history.run_count == 1
+
+
+@pytest.mark.unit
+def test_find_with_owner_none_never_returns_another_users_run(sql_store):
+    """The gap this regression test exists for: owner=None must not mean
+    'no filter' for find/history -- only list's admin path gets that
+    bypass. A caller passing owner=None should see nothing but genuinely
+    unclaimed (user_id IS NULL) runs, never someone else's."""
+    async def scenario():
+        await sql_store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="user-a")
+        return await sql_store.find("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner=None)
+
+    assert _run(scenario()) is None
+
+
+@pytest.mark.unit
+def test_history_with_owner_none_never_returns_another_users_run(sql_store):
+    async def scenario():
+        await sql_store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner="user-a")
+        return await sql_store.history("SIEMENS.NS", DAY, AnalysisProfile.FAST, owner=None)
+
+    history = _run(scenario())
+
+    assert history is None
