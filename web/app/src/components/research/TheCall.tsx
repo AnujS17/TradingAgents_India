@@ -1,6 +1,36 @@
+import { Fragment } from 'react';
+import Link from 'next/link';
+import { downloadExport } from '@/lib/api-client/client';
 import { formatPrice } from '@/lib/format';
 import { ratingColor, DirectionArrow } from '@/lib/rating-color';
 import type { Verdict } from '@/lib/api-client/client';
+
+// Single glyph for both formats -- deliberate, not a placeholder: these are
+// icon-only buttons distinguished by title/aria-label (a standard toolbar
+// pattern), not two different pictograms competing for meaning next to a
+// small "Complete" pill. See DESIGN.md §7's icon exception note for the
+// same reasoning already applied to the push-notification bell.
+const DOWNLOAD_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path
+      d="M12 3v11m0 0l-4-4m4 4l4-4M5 19h14"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+// Two side-by-side panels -- the same visual idiom CompareCard.tsx's own
+// `grid sm:grid-cols-2` layout uses for an actual comparison, so the icon
+// reads as "compare" rather than needing a legend.
+const COMPARE_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="3" y="4" width="8" height="16" rx="2" stroke="currentColor" strokeWidth="2.2" />
+    <rect x="13" y="4" width="8" height="16" rx="2" stroke="currentColor" strokeWidth="2.2" />
+  </svg>
+);
 
 // Ported from web/design/research/index.html lines 326-358 ("THE CALL").
 // The source's "what the manager actually said" trace panel (lines 360-376)
@@ -22,7 +52,19 @@ function ratingIndex(rating: string | null | undefined): number | null {
   return index === -1 ? null : index;
 }
 
-export function TheCall({ verdict }: { verdict: Verdict | null }) {
+export function TheCall({
+  verdict,
+  runId,
+  compareHref = null,
+}: {
+  verdict: Verdict | null;
+  runId: string;
+  // The most recent OTHER completed run of the same question, computed by
+  // RunView from the run-history query -- null when this is the only
+  // completed run (nothing to compare against), in which case the button
+  // doesn't render at all rather than linking to an empty compare page.
+  compareHref?: string | null;
+}) {
   if (!verdict) return null;
 
   // `levels = {}` is a compile-time-only safety net, not a real runtime case.
@@ -66,9 +108,69 @@ export function TheCall({ verdict }: { verdict: Verdict | null }) {
           <h2 className="font-tight font-black text-[#010101] text-2xl tracking-[-0.02em]">The call</h2>
           <p className="copy text-[#6F6F6F] mt-1">The portfolio manager ruled after both debates closed.</p>
         </div>
-        <span className="font-tight font-bold text-xs rounded-full bg-[#F0F6FF] text-[#00439D] border border-[#D3E1F7] px-3.5 py-2 shrink-0">
-          Complete
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* One trigger, not two buttons: hovering (or, for keyboard/touch,
+              focusing) reveals a small menu with both export formats. `group`
+              scopes the CSS-only show/hide to this wrapper; `group-focus-within`
+              is what makes it reachable without a mouse -- tabbing to either
+              menu item keeps the menu open the same way hovering does. Both
+              export routes require a bearer token now, which a plain <a href>
+              navigation can't carry -- so these are buttons that call
+              downloadExport (apiFetch under the hood) and trigger the save via
+              a blob + synthetic <a download>, not a direct navigation. */}
+          <div className="relative group">
+            <button
+              type="button"
+              title="Export"
+              aria-label="Export"
+              aria-haspopup="true"
+              className="w-9 h-9 rounded-full border border-[#E0E1E2] text-[#676D80] flex items-center justify-center hover:border-[#1C6FE6] hover:text-[#1C6FE6] group-focus-within:border-[#1C6FE6] group-focus-within:text-[#1C6FE6] transition-colors"
+            >
+              {DOWNLOAD_ICON}
+            </button>
+            <div
+              role="menu"
+              aria-label="Export"
+              className="absolute right-0 top-full mt-1.5 z-10 w-44 rounded-2xl border border-[#E0E1E2] bg-white shadow-lg py-1.5 opacity-0 invisible -translate-y-1 pointer-events-none transition-all duration-150 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:pointer-events-auto"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => downloadExport(runId, 'pdf')}
+                className="block w-full text-left px-4 py-2 font-tight font-semibold text-sm text-[#010101] hover:bg-[#F5F6F8]"
+              >
+                Export as PDF
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => downloadExport(runId, 'xlsx')}
+                className="block w-full text-left px-4 py-2 font-tight font-semibold text-sm text-[#010101] hover:bg-[#F5F6F8]"
+              >
+                Export as Excel
+              </button>
+            </div>
+          </div>
+          {/* Right of download, per the layout this replaces: a pick-two
+              checkbox section used to live in RunHistoryPanel; now it's this
+              one-click default (current run vs. the most recent other
+              completed run of the same question) instead of a whole section
+              dedicated to comparison. Absent entirely when there's nothing
+              to compare against (compareHref is null). */}
+          {compareHref && (
+            <Link
+              href={compareHref}
+              title="Compare with previous run"
+              aria-label="Compare with previous run"
+              className="w-9 h-9 rounded-full border border-[#E0E1E2] text-[#676D80] flex items-center justify-center hover:border-[#1C6FE6] hover:text-[#1C6FE6] transition-colors"
+            >
+              {COMPARE_ICON}
+            </Link>
+          )}
+          <span className="font-tight font-bold text-xs rounded-full bg-[#F0F6FF] text-[#00439D] border border-[#D3E1F7] px-3.5 py-2">
+            Complete
+          </span>
+        </div>
       </div>
 
       {/* The prominent verdict: large, colored, shape-coded (an arrow, not
@@ -100,12 +202,27 @@ export function TheCall({ verdict }: { verdict: Verdict | null }) {
 
       {activeIndex === null ? null : (
         <div className="mt-6">
-          <div className="grid grid-cols-5 items-center">
+          {/* A flat flex row of alternating dot/line siblings, not a
+              grid-cols-5 of five independent dot+line pairs (the previous
+              shape): grid-cols-5 gave each stop its own column and confined
+              that stop's trailing line to the SAME column, so the line
+              between Overweight and Buy never reached past Overweight's own
+              column -- the ruler visually stopped 1/5 short of the right
+              edge, with the Buy dot sitting at the 80% mark instead of 100%.
+              Flattening to one row of dots (shrink-0) and connecting lines
+              (flex-1) as direct siblings makes each line span the ACTUAL gap
+              between its two neighbouring dots, so the first dot's left edge
+              and the last dot's right edge land on the container's own
+              edges -- Fragment (not a wrapping div) is what makes each
+              stop's dot and line become true siblings of the row instead of
+              nesting one level deeper, which is what reintroduces the same
+              per-stop-column bug this replaces. */}
+          <div className="flex items-center">
             {RATING_STOPS.map((stop, index) => {
               const isActive = index === activeIndex;
               const stopColor = ratingColor(stop);
               return (
-                <div className="flex items-center" key={stop}>
+                <Fragment key={stop}>
                   <span
                     className="rounded-full shrink-0"
                     style={
@@ -119,22 +236,32 @@ export function TheCall({ verdict }: { verdict: Verdict | null }) {
                         : { height: '.75rem', width: '.75rem', backgroundColor: '#EBEBEB' }
                     }
                   />
+                  {/* Always gradient, regardless of activeIndex: this is a fixed
+                      5-point rating scale, not a progress bar, so Sell..Buy all
+                      exist simultaneously — nothing here is "not reached yet."
+                      The dot is the only thing that should mark position; a
+                      track that fades to grey past the active stop reads as
+                      "how far along," which is the wrong metaphor for a rating. */}
                   {index < RATING_STOPS.length - 1 && (
                     <span
                       className="h-1.5 flex-1"
                       style={{
-                        background:
-                          index < activeIndex
-                            ? `linear-gradient(90deg, ${ratingColor(RATING_STOPS[index]).text}55, ${ratingColor(RATING_STOPS[index + 1]).text}55)`
-                            : '#EBEBEB',
+                        background: `linear-gradient(90deg, ${ratingColor(RATING_STOPS[index]).text}55, ${ratingColor(RATING_STOPS[index + 1]).text}55)`,
                       }}
                     />
                   )}
-                </div>
+                </Fragment>
               );
             })}
           </div>
-          {/* Hidden below sm: "UNDERWEIGHT"/"OVERWEIGHT" at 11px don't fit a
+          {/* justify-between, matching the dot row above: the first label
+              sits flush left (under the Sell dot) and the last sits flush
+              right (under the Buy dot, now that it actually reaches the
+              edge), with the middle three evenly spaced between -- the same
+              alignment logic as the dot row, kept as two separate rows
+              (rather than labels under a single merged row) so the label
+              text can wrap/hide independently below the sm breakpoint.
+              Hidden below sm: "UNDERWEIGHT"/"OVERWEIGHT" at 11px don't fit a
               fifth of a mobile-width card without colliding into their
               neighbours (verified: they visibly overlapped at 390px). The
               big colored rating badge above already states the active
@@ -142,7 +269,7 @@ export function TheCall({ verdict }: { verdict: Verdict | null }) {
               this row still shows position at every width; this label row
               is the part that's genuinely redundant once the badge exists,
               so it's what gives way. */}
-          <div className="hidden sm:grid grid-cols-5 mt-2.5 font-tight text-[11px] font-bold tracking-wide">
+          <div className="hidden sm:flex justify-between mt-2.5 font-tight text-[11px] font-bold tracking-wide">
             {RATING_STOPS.map((stop, index) => (
               <span key={stop} style={{ color: index === activeIndex ? ratingColor(stop).text : '#676D80' }}>
                 {stop.toUpperCase()}

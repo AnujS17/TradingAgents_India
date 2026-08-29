@@ -189,16 +189,26 @@ export async function subscribeRun(
   if (!res.ok) throw new ApiError(res.status, `Failed to subscribe to run ${id}`);
 }
 
-/** Plain download URLs, not fetch wrappers -- the browser handles the
- * download natively via the endpoint's Content-Disposition header, so these
- * are meant for a bare `<a href>`, not a client-side request. Kept here
- * rather than built inline at each call site so API_BASE_URL stays owned by
- * this one module. */
-export function exportPdfUrl(id: string): string {
-  return `${API_BASE_URL}/runs/${id}/export.pdf`;
-}
-export function exportExcelUrl(id: string): string {
-  return `${API_BASE_URL}/runs/${id}/export.xlsx`;
+/** Fetches an export (with the bearer token already attached via apiFetch)
+ * and triggers a browser download -- replaces the old plain <a href> URLs
+ * (exportPdfUrl/exportExcelUrl), which couldn't carry an Authorization
+ * header and would 401 for every authenticated user against these now-
+ * protected routes. The endpoint's own Content-Disposition header no longer
+ * does the naming work since this is a blob download, not a navigation, so
+ * `download` is set explicitly here instead. */
+export async function downloadExport(id: string, format: 'pdf' | 'xlsx'): Promise<void> {
+  const path = format === 'pdf' ? `/runs/${id}/export.pdf` : `/runs/${id}/export.xlsx`;
+  const res = await apiFetch(path);
+  if (!res.ok) throw new ApiError(res.status, `Failed to export run ${id} as ${format}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `run-${id}.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function listRuns(
