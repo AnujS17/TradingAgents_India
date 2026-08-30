@@ -15,7 +15,18 @@ vi.mock('@/lib/api-client/client', async (importOriginal) => {
   return { ...actual, stopRun: vi.fn(), resumeRun: vi.fn() };
 });
 
+vi.mock('@/lib/push', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/push')>();
+  return { ...actual, subscribeToRunNotifications: vi.fn() };
+});
+
 import { resumeRun, stopRun } from '@/lib/api-client/client';
+import {
+  PushPermissionDeniedError,
+  PushServiceUnreachableError,
+  PushUnsupportedError,
+  subscribeToRunNotifications,
+} from '@/lib/push';
 
 function runningRun(overrides: Partial<RunDetail> = {}): RunDetail {
   return {
@@ -125,5 +136,77 @@ describe('RunStatusBanner', () => {
     expect(await screen.findByText(/could not resume/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^resume$/i })).not.toBeDisabled();
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it('shows a Notify me button while running, and subscribes on click', async () => {
+    vi.mocked(subscribeToRunNotifications).mockResolvedValue(undefined);
+
+    render(<RunStatusBanner run={runningRun()} />);
+    await userEvent.click(screen.getByRole('button', { name: /notify me/i }));
+
+    expect(subscribeToRunNotifications).toHaveBeenCalledWith('r1');
+    expect(await screen.findByText(/notified/i)).toBeInTheDocument();
+    // Once subscribed there is nothing left to click -- the button is
+    // replaced, not just disabled.
+    expect(screen.queryByRole('button', { name: /notify me/i })).not.toBeInTheDocument();
+  });
+
+  it('disables the button once clicked, showing Enabling…', async () => {
+    vi.mocked(subscribeToRunNotifications).mockImplementation(() => new Promise(() => {}));
+
+    render(<RunStatusBanner run={runningRun()} />);
+    await userEvent.click(screen.getByRole('button', { name: /notify me/i }));
+
+    expect(screen.getByRole('button', { name: /enabling/i })).toBeDisabled();
+  });
+
+  it('shows a precise message when the browser has no push support', async () => {
+    vi.mocked(subscribeToRunNotifications).mockRejectedValue(
+      new PushUnsupportedError('nope'),
+    );
+
+    render(<RunStatusBanner run={runningRun()} />);
+    await userEvent.click(screen.getByRole('button', { name: /notify me/i }));
+
+    expect(await screen.findByText(/not supported in this browser/i)).toBeInTheDocument();
+    // Recoverable: the button comes back so the user can try a different
+    // browser action, rather than being stuck showing "Enabling…" forever.
+    expect(screen.getByRole('button', { name: /notify me/i })).not.toBeDisabled();
+  });
+
+  it('shows a precise message when notification permission is denied', async () => {
+    vi.mocked(subscribeToRunNotifications).mockRejectedValue(
+      new PushPermissionDeniedError('nope'),
+    );
+
+    render(<RunStatusBanner run={runningRun()} />);
+    await userEvent.click(screen.getByRole('button', { name: /notify me/i }));
+
+    expect(await screen.findByText(/permission was not granted/i)).toBeInTheDocument();
+  });
+
+  it('shows the push-service-specific message when the browser cannot reach its push service', async () => {
+    // The real failure mode this guards: confirmed live against Chrome that
+    // pushManager.subscribe() raises this exact AbortError when the browser
+    // can't reach Google's FCM, reproducible even with a freshly-generated
+    // key with nothing to do with this app's own VAPID key -- so the UI
+    // must say "not your problem, a network issue," not "try again."
+    vi.mocked(subscribeToRunNotifications).mockRejectedValue(
+      new PushServiceUnreachableError('Your browser could not reach its push service.'),
+    );
+
+    render(<RunStatusBanner run={runningRun()} />);
+    await userEvent.click(screen.getByRole('button', { name: /notify me/i }));
+
+    expect(await screen.findByText(/could not reach its push service/i)).toBeInTheDocument();
+  });
+
+  it('shows a generic message for any other subscribe failure', async () => {
+    vi.mocked(subscribeToRunNotifications).mockRejectedValue(new Error('network blip'));
+
+    render(<RunStatusBanner run={runningRun()} />);
+    await userEvent.click(screen.getByRole('button', { name: /notify me/i }));
+
+    expect(await screen.findByText(/could not enable notifications/i)).toBeInTheDocument();
   });
 });

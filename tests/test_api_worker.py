@@ -351,6 +351,125 @@ def test_worker_lanes_never_claim_the_same_row(store, monkeypatch):
 
 
 @pytest.mark.unit
+def test_execute_run_notifies_a_subscriber_on_completion(store, monkeypatch):
+    import api.push
+    import api.service
+
+    monkeypatch.setattr(
+        api.service,
+        "run_analysis",
+        lambda *a, **k: (Verdict(rating="Buy"), Reports(final_decision="Accumulate.")),
+    )
+    sent = []
+    monkeypatch.setattr(
+        api.push, "send", lambda sub, payload, subject: sent.append(payload) or True
+    )
+
+    async def scenario():
+        from api.worker import execute_run
+
+        created = await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        await store.add_push_subscription(created.id, "https://push.example/x", "k", "a")
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+        return created.id
+
+    run_id = _run(scenario())
+
+    assert len(sent) == 1
+    assert sent[0]["title"] == "SIEMENS.NS analysis complete"
+    assert sent[0]["url"] == f"/runs/{run_id}"
+    # Used subscriptions must not linger -- a later, unrelated notification
+    # attempt for this run_id would otherwise double-send.
+    assert _run(store.get_push_subscriptions(run_id)) == []
+
+
+@pytest.mark.unit
+def test_execute_run_notifies_a_subscriber_on_failure(store, monkeypatch):
+    import api.push
+    import api.service
+
+    monkeypatch.setattr(
+        api.service, "run_analysis", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    sent = []
+    monkeypatch.setattr(
+        api.push, "send", lambda sub, payload, subject: sent.append(payload) or True
+    )
+
+    async def scenario():
+        from api.worker import execute_run
+
+        created = await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        await store.add_push_subscription(created.id, "https://push.example/x", "k", "a")
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+
+    _run(scenario())
+
+    assert len(sent) == 1
+    assert sent[0]["title"] == "SIEMENS.NS analysis failed"
+
+
+@pytest.mark.unit
+def test_a_push_send_failure_does_not_change_the_runs_final_status(store, monkeypatch):
+    """The notification is a courtesy on top of an already-decided outcome
+    -- the push subsystem being completely broken must never turn a
+    successful run into a failed one, or vice versa."""
+    import api.push
+    import api.service
+
+    monkeypatch.setattr(
+        api.service,
+        "run_analysis",
+        lambda *a, **k: (Verdict(rating="Hold"), Reports(final_decision="ok")),
+    )
+
+    def boom(*_a, **_k):
+        raise RuntimeError("push subsystem is on fire")
+
+    monkeypatch.setattr(api.push, "send", boom)
+
+    async def scenario():
+        from api.worker import execute_run
+
+        created = await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        await store.add_push_subscription(created.id, "https://push.example/x", "k", "a")
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+        return await store.get(created.id)
+
+    result = _run(scenario())
+
+    assert result.status is RunStatus.COMPLETED
+
+
+@pytest.mark.unit
+def test_execute_run_with_no_subscribers_never_calls_push_send(store, monkeypatch):
+    import api.push
+    import api.service
+
+    monkeypatch.setattr(
+        api.service,
+        "run_analysis",
+        lambda *a, **k: (Verdict(rating="Hold"), Reports(final_decision="ok")),
+    )
+    called = {"count": 0}
+    monkeypatch.setattr(api.push, "send", lambda *a, **k: called.update(count=called["count"] + 1))
+
+    async def scenario():
+        from api.worker import execute_run
+
+        await store.create("SIEMENS.NS", DAY, AnalysisProfile.FAST)
+        claimed = await store.claim_next_run()
+        await execute_run(store, claimed)
+
+    _run(scenario())
+
+    assert called["count"] == 0
+
+
+@pytest.mark.unit
 def test_history_returns_correct_run_summaries(store, monkeypatch):
     """Fix regression guard: history() validates RunSummary directly from the
     ORM row instead of building a full RunDetail (via _to_detail, which runs
