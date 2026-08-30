@@ -95,14 +95,10 @@ function barColor(key: keyof Reports, verdict: Verdict | null): string {
   return 'var(--accent-1)';
 }
 
-export function ReportsRecord({ reports, verdict = null }: { reports: Reports | null; verdict?: Verdict | null }) {
-  // Independent per-row toggle (any number open at once), matching the
-  // source's report-disclosure JS (lines 935-948), which only ever flips the
-  // row that was clicked and never closes the others.
-  const [openKeys, setOpenKeys] = useState<ReadonlySet<keyof Reports>>(
-    () => new Set(reports?.final_decision ? (['final_decision'] as const) : []),
-  );
-
+// Pure, called from both ReportsRecord (the header needs the totals) and
+// ReportsRecordBody (the accordion needs the filtered groups) so the two
+// never compute slightly different numbers for the same `reports` value.
+function summarizeReports(reports: Reports | null) {
   if (!reports) return null;
 
   const wordCounts = new Map<keyof Reports, number>(
@@ -113,11 +109,48 @@ export function ReportsRecord({ reports, verdict = null }: { reports: Reports | 
   if (wordCounts.size === 0) return null;
 
   const totalWordCount = [...wordCounts.values()].reduce((sum, n) => sum + n, 0);
-
   const groups = GROUPS.map((group) => ({
     ...group,
     keys: group.keys.filter((key) => wordCounts.has(key)),
   })).filter((group) => group.keys.length > 0);
+
+  return { wordCounts, totalWordCount, groups };
+}
+
+/**
+ * The accordion itself, with no outer card/heading — factored out so it can
+ * be embedded somewhere other than its own full-width section (the compare
+ * page shows two of these side by side; see CompareCard.tsx). `idPrefix`
+ * exists for exactly that case: `doc-{key}` collides as an HTML id the
+ * moment two instances render on the same page with the same report open,
+ * breaking `aria-controls` for both. ReportsRecord below leaves it at the
+ * default empty string since it only ever renders once per page.
+ */
+export function ReportsRecordBody({
+  reports,
+  verdict = null,
+  idPrefix = '',
+}: {
+  reports: Reports | null;
+  verdict?: Verdict | null;
+  idPrefix?: string;
+}) {
+  // Independent per-row toggle (any number open at once), matching the
+  // source's report-disclosure JS (lines 935-948), which only ever flips the
+  // row that was clicked and never closes the others.
+  const [openKeys, setOpenKeys] = useState<ReadonlySet<keyof Reports>>(
+    () => new Set(reports?.final_decision ? (['final_decision'] as const) : []),
+  );
+  // Separate from openKeys: once a report has been opened, its markdown
+  // stays mounted (just visually collapsed by rep__panel's max-height:0)
+  // rather than being torn down and re-parsed on every subsequent toggle.
+  // openKeys alone would work for visibility, but re-running ReactMarkdown
+  // on each open/close is wasted work for content that hasn't changed.
+  const [everOpenedKeys, setEverOpenedKeys] = useState<ReadonlySet<keyof Reports>>(() => openKeys);
+
+  const summary = summarizeReports(reports);
+  if (!summary) return null;
+  const { wordCounts, groups } = summary;
 
   function toggle(key: keyof Reports) {
     setOpenKeys((prev) => {
@@ -129,7 +162,114 @@ export function ReportsRecord({ reports, verdict = null }: { reports: Reports | 
       }
       return next;
     });
+    setEverOpenedKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
   }
+
+  return (
+    <div className="flex flex-col gap-9">
+      {groups.map((group) => {
+        const groupWords = group.keys.reduce((sum, key) => sum + (wordCounts.get(key) ?? 0), 0);
+
+        return (
+          <div key={group.label}>
+            <div className="flex items-baseline justify-between gap-3 mb-2.5">
+              <p className="rep-group__label">{group.label}</p>
+              <p className="rep-group__count">{groupWords.toLocaleString('en-IN')} words</p>
+            </div>
+            <div className="rep-group__rows">
+              {group.keys.map((key) => {
+                const isOpen = openKeys.has(key);
+                const wordCount = wordCounts.get(key) ?? 0;
+                const panelId = idPrefix ? `doc-${idPrefix}-${key}` : `doc-${key}`;
+                const color = barColor(key, verdict);
+                const excerpt = excerptFor(reports![key] as string);
+
+                return (
+                  <div key={key}>
+                    <button
+                      type="button"
+                      className="rep"
+                      aria-expanded={isOpen}
+                      aria-controls={panelId}
+                      onClick={() => toggle(key)}
+                      style={{ '--rep-color': color } as CSSProperties}
+                    >
+                      <span className="rep__top">
+                        <span className="rep__t">
+                          {CHEVRON}
+                          {REPORT_LABELS[key]}
+                        </span>
+                        <span className="rep__meta">
+                          <span className="rep__read">{readMinutes(wordCount)} min read</span>
+                          <span className="rep__w">{wordCount.toLocaleString('en-IN')} words</span>
+                        </span>
+                      </span>
+                      {/* The point of this whole redesign: a reader sees the
+                          report's own Executive Summary (or its opening line)
+                          without expanding the row — not just a title and a
+                          word count. Hidden once open: the full text right
+                          below makes a truncated repeat of itself redundant. */}
+                      {!isOpen && <span className="rep__excerpt">{excerpt}</span>}
+                    </button>
+                    <div
+                      className="rep__panel"
+                      id={panelId}
+                      role="region"
+                      aria-label={REPORT_LABELS[key]}
+                      style={{ maxHeight: isOpen ? OPEN_PANEL_MAX_HEIGHT : '0px' }}
+                      // `max-height: 0; overflow: hidden` alone hides the
+                      // panel visually but leaves its content in the a11y
+                      // tree and tab order (final review finding #2) — a
+                      // screen reader or keyboard user can still reach a
+                      // closed report's links/text. `inert` removes the
+                      // subtree from both while the max-height transition
+                      // still animates normally (unlike `hidden`, which
+                      // would kill it).
+                      inert={!isOpen}
+                    >
+                      <div className="rep__doc">
+                        {/* Deferred until first opened: parsing all ten
+                            reports (up to ~11,000 words combined) through
+                            remark/GFM on every page load -- including the
+                            nine collapsed by default -- was pure wasted work,
+                            since rep__panel already hides them visually via
+                            max-height:0 regardless of whether their markdown
+                            is mounted. everOpenedKeys (not isOpen) is the
+                            gate so a report already parsed once doesn't get
+                            re-parsed every time it's toggled shut and open
+                            again. */}
+                        {everOpenedKeys.has(key) && (
+                          // del: 'span' -- a reasoning model occasionally leaks
+                          // self-revision markup (~~old clause~~ new clause) into
+                          // a decision field; GFM's <del> renders that as a
+                          // browser-default strikethrough, which reads as a
+                          // rendering bug, not an edit. A bare span keeps the
+                          // text (removing it outright can leave a sentence
+                          // missing its object) without the struck-through
+                          // styling. Root cause fixed in schemas.py's field
+                          // descriptions; this is the backstop for whatever
+                          // still slips through.
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ del: 'span' }}>
+                            {reports![key] as string}
+                          </ReactMarkdown>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function ReportsRecord({ reports, verdict = null }: { reports: Reports | null; verdict?: Verdict | null }) {
+  const summary = summarizeReports(reports);
+  if (!summary) return null;
+  const { wordCounts, totalWordCount } = summary;
 
   return (
     <section id="record" aria-label="The full record" className="mt-8 rounded-[28px] border border-[#E0E1E2] bg-white p-7 lg:p-9">
@@ -144,90 +284,8 @@ export function ReportsRecord({ reports, verdict = null }: { reports: Reports | 
         the rest.
       </p>
 
-      <div className="mt-7 flex flex-col gap-9">
-        {groups.map((group) => {
-          const groupWords = group.keys.reduce((sum, key) => sum + (wordCounts.get(key) ?? 0), 0);
-
-          return (
-            <div key={group.label}>
-              <div className="flex items-baseline justify-between gap-3 mb-2.5">
-                <p className="rep-group__label">{group.label}</p>
-                <p className="rep-group__count">{groupWords.toLocaleString('en-IN')} words</p>
-              </div>
-              <div className="rep-group__rows">
-                {group.keys.map((key) => {
-                  const isOpen = openKeys.has(key);
-                  const wordCount = wordCounts.get(key) ?? 0;
-                  const panelId = `doc-${key}`;
-                  const color = barColor(key, verdict);
-                  const excerpt = excerptFor(reports[key] as string);
-
-                  return (
-                    <div key={key}>
-                      <button
-                        type="button"
-                        className="rep"
-                        aria-expanded={isOpen}
-                        aria-controls={panelId}
-                        onClick={() => toggle(key)}
-                        style={{ '--rep-color': color } as CSSProperties}
-                      >
-                        <span className="rep__top">
-                          <span className="rep__t">
-                            {CHEVRON}
-                            {REPORT_LABELS[key]}
-                          </span>
-                          <span className="rep__meta">
-                            <span className="rep__read">{readMinutes(wordCount)} min read</span>
-                            <span className="rep__w">{wordCount.toLocaleString('en-IN')} words</span>
-                          </span>
-                        </span>
-                        {/* The point of this whole redesign: a reader sees the
-                            report's own Executive Summary (or its opening line)
-                            without expanding the row — not just a title and a
-                            word count. Hidden once open: the full text right
-                            below makes a truncated repeat of itself redundant. */}
-                        {!isOpen && <span className="rep__excerpt">{excerpt}</span>}
-                      </button>
-                      <div
-                        className="rep__panel"
-                        id={panelId}
-                        role="region"
-                        aria-label={REPORT_LABELS[key]}
-                        style={{ maxHeight: isOpen ? OPEN_PANEL_MAX_HEIGHT : '0px' }}
-                        // `max-height: 0; overflow: hidden` alone hides the
-                        // panel visually but leaves its content in the a11y
-                        // tree and tab order (final review finding #2) — a
-                        // screen reader or keyboard user can still reach a
-                        // closed report's links/text. `inert` removes the
-                        // subtree from both while the max-height transition
-                        // still animates normally (unlike `hidden`, which
-                        // would kill it).
-                        inert={!isOpen}
-                      >
-                        <div className="rep__doc">
-                          {/* del: 'span' -- a reasoning model occasionally leaks
-                              self-revision markup (~~old clause~~ new clause) into
-                              a decision field; GFM's <del> renders that as a
-                              browser-default strikethrough, which reads as a
-                              rendering bug, not an edit. A bare span keeps the
-                              text (removing it outright can leave a sentence
-                              missing its object) without the struck-through
-                              styling. Root cause fixed in schemas.py's field
-                              descriptions; this is the backstop for whatever
-                              still slips through. */}
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ del: 'span' }}>
-                            {reports[key] as string}
-                          </ReactMarkdown>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+      <div className="mt-7">
+        <ReportsRecordBody reports={reports} verdict={verdict} />
       </div>
     </section>
   );

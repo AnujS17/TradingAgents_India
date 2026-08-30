@@ -3,8 +3,8 @@ import type { NewsSource } from '@/lib/api-client/client';
 // Real citations for the News/Sentiment reports, not a drill-down: every
 // entry is an article those reports were actually grounded in (see
 // docs/superpowers/specs/2026-08-19-news-sources-design.md). Renders
-// nothing when empty, matching RunHistoryPanel's null-render pattern —
-// an empty citation list is a legitimate state, never a placeholder.
+// nothing when empty — an empty citation list is a legitimate state,
+// never a placeholder.
 //
 // 2026-08-23 rework: a tinted card per source (design review) read as
 // heavy for what's fundamentally a link list — and left a dangling em dash

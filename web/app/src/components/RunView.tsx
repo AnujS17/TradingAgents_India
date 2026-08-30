@@ -11,7 +11,6 @@ import { TheCall } from './research/TheCall';
 import { ReportsRecord } from './research/ReportsRecord';
 import { SourcesPanel } from './research/SourcesPanel';
 import { LiveStream } from './research/LiveStream';
-import { RunHistoryPanel } from './RunHistoryPanel';
 import { SiteFooter } from './landing/SiteFooter';
 
 export function RunView({
@@ -32,6 +31,16 @@ export function RunView({
     queryFn: () => getRunHistory(current.ticker, current.analysis_date, current.profile),
     enabled: current.status === 'completed',
   });
+
+  // `runs` is newest-first (RunHistory.ratings' own doc says the same of its
+  // parallel list), so this is "the most recent other completed analysis of
+  // the same question" -- the one comparison a reader most likely wants one
+  // click away. Null hides TheCall's compare button entirely rather than
+  // linking to a compare page with only one side fillable.
+  const otherCompletedRun = historyQuery.data?.runs.find(
+    (run) => run.id !== current.id && run.status === 'completed',
+  );
+  const compareHref = otherCompletedRun ? `/runs/compare?a=${current.id}&b=${otherCompletedRun.id}` : null;
 
   return (
     <>
@@ -56,8 +65,7 @@ export function RunView({
           <div className="grid lg:grid-cols-[260px_1fr] gap-8 lg:gap-12 items-start">
             {/* TheDesk (Task 9) takes no props and does no gating of its own
                 by design — it relies on being mounted inside this same
-                completed-only block, matching TheCall/RunHistoryPanel/
-                ReportsRecord below. */}
+                completed-only block, matching TheCall/ReportsRecord below. */}
             <TheDesk />
             {/* min-w-0: this <div> and TheDesk's own <aside> are grid items
                 one level below the `main > * { min-width: 0 }` rule in
@@ -70,13 +78,7 @@ export function RunView({
                 clip against. Found verifying the 2026-08-23 rating-color
                 work at 380px; pre-existing, unrelated to that change. */}
             <div className="min-w-0">
-              <TheCall verdict={current.verdict ?? null} />
-              <RunHistoryPanel
-                runCount={current.run_count}
-                isContested={current.verdict_is_contested}
-                history={historyQuery.data ?? null}
-                isError={historyQuery.isError}
-              />
+              <TheCall verdict={current.verdict ?? null} runId={current.id} compareHref={compareHref ?? null} />
               <ReportsRecord reports={current.reports ?? null} verdict={current.verdict ?? null} />
               <SourcesPanel sources={current.news_sources ?? []} />
             </div>
