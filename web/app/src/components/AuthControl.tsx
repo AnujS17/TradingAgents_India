@@ -11,12 +11,12 @@ export function AuthControl() {
 
   if (!session) {
     return (
-      // A bordered pill, not plain nav-link text -- distinguishable from
-      // "How it works"/"Saved runs" etc. at a glance without competing
-      // with "Research a stock" (the solid blue CTA) for attention.
+      // Same solid-blue treatment as "Research a stock" (SiteNav.tsx) --
+      // deliberately matching now rather than staying visually distinct
+      // from it, per direct instruction.
       <Link
         href="/login"
-        className="font-tight font-bold text-xs rounded-full border border-white/25 text-white px-4 py-2 hover:border-white/45 hover:bg-white/5 transition-colors"
+        className="font-tight font-bold text-xs rounded-full bg-[#1C6FE6] text-white px-4 py-2 hover:bg-[#237FFB] transition-colors"
       >
         Sign in / Sign up
       </Link>

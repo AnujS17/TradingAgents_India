@@ -37,24 +37,34 @@ export function SiteNav() {
           <Link href="/runs" className="transition hover:opacity-75 hover:text-white">
             Saved runs
           </Link>
-          <AuthControl />
         </nav>
-        {/* Anchors to the hero's SearchForm wrapper (id="try" — see Hero.tsx). */}
-        <a
-          href="#try"
-          className="btn-shimmer inline-flex items-center gap-1.5 rounded-full bg-[#1C6FE6] text-white text-sm font-semibold px-5 py-2.5 hover:bg-[#237FFB] transition-colors"
-        >
-          Research a stock
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M5 12h14M13 6l6 6-6 6"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </a>
+        {/* AuthControl moved out of the nav list and placed after "Research
+            a stock" (not inside it) -- the trailing slot at the bar's far
+            right, per direct placement instruction. "Research a stock"
+            itself keeps its original always-visible (not hidden below
+            md:) behavior; only AuthControl is desktop-only, matching
+            ResearchNav's existing "hidden sm:block" treatment of it. */}
+        <div className="flex items-center gap-4">
+          {/* Anchors to the hero's SearchForm wrapper (id="try" — see Hero.tsx). */}
+          <a
+            href="#try"
+            className="btn-shimmer inline-flex items-center gap-1.5 rounded-full bg-[#1C6FE6] text-white text-sm font-semibold px-5 py-2.5 hover:bg-[#237FFB] transition-colors"
+          >
+            Research a stock
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M5 12h14M13 6l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </a>
+          <div className="hidden md:block">
+            <AuthControl />
+          </div>
+        </div>
       </div>
     </header>
   );
