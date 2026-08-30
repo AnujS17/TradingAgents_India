@@ -167,6 +167,66 @@ def test_current_price_failure_does_not_break_the_rest_of_the_verdict(monkeypatc
 
 
 @pytest.mark.unit
+def test_hold_rating_overrides_a_directional_trader_proposal():
+    """Reproduces a real production case (SAIL, 2026-08-29, 6-month horizon):
+    the Trader proposed Buy with real entry/stop BEFORE the Portfolio
+    Manager ran, and the Portfolio Manager -- reading the full risk debate,
+    more context than the Trader had -- landed on Hold. Without
+    reconciliation the card showed "Rating: Hold" next to a live Buy setup
+    (entry 195.9, stop 170): a real, actionable-looking number pair that
+    contradicted the product's own "nothing to size on a Hold" contract.
+    The Portfolio Manager's rating is the FINAL word; it must win."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY,
+        reasoning="Technicals confirm a breakout.",
+        entry_price=195.9,
+        stop_loss=170.0,
+        position_sizing="Full position.",
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.HOLD,
+        executive_summary="Evidence is more balanced than the trader's setup suggests.",
+        investment_thesis="Risk debate surfaced a caveat the trader proposal didn't weigh.",
+    )
+
+    verdict = _extract_verdict(_state(proposal=proposal, decision=decision))
+
+    assert verdict.rating == "Hold"
+    assert verdict.levels.action == "Hold"
+    assert verdict.levels.entry_price is None
+    assert verdict.levels.stop_loss is None
+    assert verdict.levels.position_sizing is None
+    assert verdict.price_target is None
+
+
+@pytest.mark.unit
+def test_non_hold_rating_leaves_the_traders_directional_proposal_alone():
+    """The reconciliation is scoped to Hold only -- a Buy/Sell/Overweight/
+    Underweight rating must not silently strip a real, still-relevant trade
+    setup just because this code path now exists."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY,
+        reasoning="Momentum confirmed.",
+        entry_price=195.9,
+        stop_loss=170.0,
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.OVERWEIGHT,
+        executive_summary="Add on strength.",
+        investment_thesis="Aligned with the trader's setup.",
+        price_target=220.0,
+    )
+
+    verdict = _extract_verdict(_state(proposal=proposal, decision=decision))
+
+    assert verdict.rating == "Overweight"
+    assert verdict.levels.action == "Buy"
+    assert verdict.levels.entry_price == 195.9
+    assert verdict.levels.stop_loss == 170.0
+    assert verdict.price_target == 220.0
+
+
+@pytest.mark.unit
 def test_prose_containing_the_label_does_not_confuse_the_parser():
     """Only a line that STARTS with the bold label counts, so a rating
     discussed inside the thesis text cannot be mistaken for the field."""

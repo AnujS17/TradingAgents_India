@@ -148,19 +148,52 @@ def _extract_verdict(state: dict) -> Verdict:
     A missing stop-loss is EXPECTED, not an error — the trader schema drops a
     stop it cannot make coherent rather than emitting one offering no
     protection.
+
+    A Hold rating forces Hold-consistent levels, even if the Trader proposed
+    otherwise. The Trader commits to action/entry_price/stop_loss in its OWN
+    call, BEFORE the Portfolio Manager runs — it has no way to know the
+    Portfolio Manager's eventual rating. The Portfolio Manager's rating is
+    documented as "the final position rating" (schemas.PortfolioDecision.
+    rating) and reads the Trader's proposal as one input among several (the
+    full risk debate too), so it can — correctly, given more context — land
+    on Hold after the Trader already proposed a directional trade. Without
+    this reconciliation the card could show "Rating: Hold" next to a real
+    Buy setup with concrete entry/stop numbers: not a cosmetic label
+    mismatch but a conflicting, actionable signal a reader could size a
+    position against, exactly contradicting the product's own stated
+    contract that a Hold has nothing to size (see TheCall.tsx's levels-
+    explanation copy). price_target does NOT need the same treatment: it
+    comes from the Portfolio Manager's own call alongside rating, already
+    instructed to null it when rating is Hold — self-consistent by
+    construction, unlike the Trader's fields. Nulled here regardless, as a
+    cheap belt-and-suspenders in case a model ever violates that instruction.
     """
     trader = state.get("trader_investment_plan") or ""
     final = state.get("final_trade_decision") or ""
 
+    rating = _field(final, "Rating")
+    action = _field(trader, "Action")
+    entry_price = _float_field(trader, "Entry Price")
+    stop_loss = _float_field(trader, "Stop Loss")
+    position_sizing = _field(trader, "Position Sizing")
+    price_target = _float_field(final, "Price Target")
+
+    if rating == "Hold":
+        action = "Hold"
+        entry_price = None
+        stop_loss = None
+        position_sizing = None
+        price_target = None
+
     return Verdict(
-        rating=_field(final, "Rating"),
-        price_target=_float_field(final, "Price Target"),
+        rating=rating,
+        price_target=price_target,
         time_horizon=_field(final, "Time Horizon"),
         levels=TradeLevels(
-            action=_field(trader, "Action"),
-            entry_price=_float_field(trader, "Entry Price"),
-            stop_loss=_float_field(trader, "Stop Loss"),
-            position_sizing=_field(trader, "Position Sizing"),
+            action=action,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            position_sizing=position_sizing,
         ),
         current_price=_extract_current_price(state),
     )
