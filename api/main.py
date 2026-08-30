@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import health, runs
+from api.routers import auth, health, runs
 from api.settings import get_settings
 
 DESCRIPTION = """
@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
         allow_headers=settings.allowed_headers,
     )
 
+    app.include_router(auth.router)
     app.include_router(health.router)
     app.include_router(runs.router)
 

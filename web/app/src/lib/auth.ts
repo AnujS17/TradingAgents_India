@@ -24,16 +24,40 @@ const BEARER_TOKEN_MAX_AGE_SECONDS = 15 * 60; // 15 minutes
  * in the httpOnly cookie); session() below passes the much shorter
  * BEARER_TOKEN_MAX_AGE_SECONDS instead, since that copy is JS-readable. */
 function signBearerToken(
-  claims: { sub?: string; role?: string; tier?: string },
+  claims: {
+    sub?: string;
+    role?: string;
+    tier?: string;
+    // Carried so POST /auth/bootstrap can build the users row from the
+    // token alone (api/routers/auth.py reads exactly these). Undefined
+    // values are dropped by JSON.stringify before signing, so a token
+    // minted without them is byte-identical to the old {sub, role, tier}
+    // shape -- nothing that already verifies one stops verifying.
+    email?: string;
+    name?: string;
+    picture?: string;
+  },
   expiresInSeconds: number = SESSION_MAX_AGE_SECONDS,
   secret: string = process.env.NEXTAUTH_SECRET as string,
 ): string {
   return jwt.sign(
-    { sub: claims.sub, role: claims.role, tier: claims.tier },
+    {
+      sub: claims.sub,
+      role: claims.role,
+      tier: claims.tier,
+      email: claims.email,
+      name: claims.name,
+      picture: claims.picture,
+    },
     secret,
     { algorithm: 'HS256', expiresIn: expiresInSeconds },
   );
 }
+
+/** Where FastAPI lives, as seen from the Next.js SERVER (the signIn
+ * callback runs server-side, so NEXT_PUBLIC_API_BASE_URL's browser-facing
+ * value is not necessarily reachable from here). */
+const API_BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 // The JWT this produces is sent to FastAPI as a bearer token
 // (api/auth.py::decode_token verifies it independently, same
@@ -63,7 +87,14 @@ export const authOptions: NextAuthOptions = {
   jwt: {
     async encode({ token, secret }) {
       return signBearerToken(
-        { sub: token?.sub, role: token?.role as string, tier: token?.tier as string },
+        {
+          sub: token?.sub,
+          role: token?.role as string,
+          tier: token?.tier as string,
+          email: token?.email ?? undefined,
+          name: token?.name ?? undefined,
+          picture: token?.picture ?? undefined,
+        },
         SESSION_MAX_AGE_SECONDS,
         secret as string,
       );
@@ -74,9 +105,63 @@ export const authOptions: NextAuthOptions = {
     },
   },
   callbacks: {
+    // Runs SERVER-side during the actual OAuth handshake -- once per genuine
+    // sign-in, never on an ordinary token refresh and never per API request.
+    // That is exactly the cadence user-creation wants: FastAPI's
+    // get_current_user deliberately 401s a validly-signed token whose
+    // google_sub has no users row (so a deleted account cannot resurrect
+    // itself with a still-valid token), which means SOMETHING has to create
+    // that row on the way in. POST /auth/bootstrap is the one endpoint that
+    // does, and this is its only caller. Without it every user 401s forever
+    // and the first-admin bootstrap never fires.
+    async signIn({ account, profile }) {
+      // Only an OAuth handshake carries both; anything else (there is no
+      // other provider configured today) has no profile to bootstrap from.
+      if (!account || !profile) return true;
+
+      const googleProfile = profile as { sub?: string; email?: string; name?: string; picture?: string };
+      const token = signBearerToken({
+        sub: googleProfile.sub,
+        // Placeholders, as everywhere else in this file -- the backend never
+        // trusts them, it only needs sub/email/name/picture to upsert the row.
+        role: 'user',
+        tier: 'free',
+        email: googleProfile.email,
+        name: googleProfile.name,
+        picture: googleProfile.picture,
+      });
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/bootstrap`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          console.error('auth bootstrap failed', res.status, await res.text().catch(() => ''));
+          // Returning false makes NextAuth redirect to
+          // /api/auth/error?error=AccessDenied and set NO session cookie
+          // (verified in node_modules/next-auth/core/routes/callback.js:78-98).
+          // Denying the sign-in outright is better than handing the user a
+          // session whose every API call will 401 with no way to recover.
+          return false;
+        }
+      } catch (err) {
+        console.error('auth bootstrap request failed', err);
+        return false;
+      }
+
+      return true;
+    },
     async jwt({ token, account, profile }) {
       if (account && profile) {
-        token.sub = profile.sub as string;
+        const googleProfile = profile as { sub?: string; email?: string; name?: string; picture?: string };
+        token.sub = googleProfile.sub;
+        // Captured so signBearerToken can forward them; Google returns all
+        // three as standard OIDC claims (see next-auth's own GoogleProfile
+        // type in node_modules/next-auth/providers/google.d.ts).
+        token.email = googleProfile.email;
+        token.name = googleProfile.name;
+        token.picture = googleProfile.picture;
         token.role = 'user';
         token.tier = 'free';
       }
@@ -102,6 +187,9 @@ export const authOptions: NextAuthOptions = {
             sub: token?.sub,
             role: token?.role as string,
             tier: token?.tier as string,
+            email: token?.email ?? undefined,
+            name: token?.name ?? undefined,
+            picture: token?.picture ?? undefined,
           },
           BEARER_TOKEN_MAX_AGE_SECONDS,
         ),

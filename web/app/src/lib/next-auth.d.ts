@@ -16,5 +16,13 @@ declare module 'next-auth/jwt' {
     sub?: string;
     role?: string;
     tier?: string;
+    // Forwarded into the bearer token so POST /auth/bootstrap can build the
+    // users row from the token's own claims. Declared here as `string`
+    // rather than next-auth's own `string | null` (DefaultJWT) because this
+    // app only ever populates them from Google's OIDC profile, and
+    // signBearerToken's claims are `string | undefined`.
+    email?: string;
+    name?: string;
+    picture?: string;
   }
 }
