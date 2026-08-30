@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -21,7 +21,14 @@ const TEAMS: { name: string; agents: string[] }[] = [
 // the event stream yet (only token deltas), so an agent with content here
 // has said something, not necessarily finished. Do not upgrade this to a
 // done/checkmark state without a real completion signal behind it.
-function AgentRow({ name, text }: { name: string; text: string | undefined }) {
+// Wrapped in memo: eventsByNode is one shared object keyed by node name, so
+// every token from ANY agent produces a new object and re-renders every
+// AgentRow that reads it. Without this, an update to one agent's text was
+// re-invoking all dozen rows' render bodies -- including re-parsing the
+// OTHER eleven agents' full markdown through ReactMarkdown from scratch on
+// every single token, not just the one row that actually changed. Purely a
+// render-skip when name/text are unchanged -- no behavior difference.
+const AgentRow = memo(function AgentRow({ name, text }: { name: string; text: string | undefined }) {
   const hasSpoken = Boolean(text);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Sticky-bottom auto-scroll: true means the reader was at (or within
@@ -84,7 +91,7 @@ function AgentRow({ name, text }: { name: string; text: string | undefined }) {
       )}
     </div>
   );
-}
+});
 
 // Live view while a run is in progress -- one card per team (same roster
 // as TheDesk's completed-run sidebar), each agent's streamed text
