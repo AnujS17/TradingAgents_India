@@ -54,6 +54,14 @@ Copy the `:root` block verbatim from the reference file. Current values:
   retail readers already read green/red as "my position is up/down";
   borrowing them for anything that isn't the rating/action fields still
   mislabels something the reader will misread as a price move.
+  — Second exception, 2026-08-28, explicit user request: the landing
+  page's "Leadership churn" argument card (`TrustStrip.tsx`) colors its
+  event-timeline nodes green/red by real-world valence (a divestment is
+  the company's own proactive move; a resignation or a weak print is a
+  negative outcome), reusing the same rating-color `-700` family rather
+  than new hexes. The one event whose valence is the card's actual
+  bull/bear subject ("new management") is left neutral on purpose, so
+  the color-coding doesn't silently pick a side of the debate.
 - Light sections: `#fff` / `--tint` ground, `--ink` headings, `--muted` body.
 - Dark sections: `--void` ground, white headings, `rgba(255,255,255,.55–.62)` body.
 
@@ -196,7 +204,14 @@ the background layer, not the section. Use `overflow-x: clip` on `body`, never `
 - A blank field is meaningful: render "Not set", never `0` or a dash.
 - Keep `TODO(...)` markers for anything unshippable. Current ones: `name` (wordmark is
   a placeholder), `art` ×2 (picsum placeholders), `proof`, `regulatory`, `legal`.
-- **Zero em-dashes (`—`) in visible copy.** Use a period, comma, or colon.
+- **Zero em-dashes (`—`) in visible copy.** Use a period, comma, or colon. Enforced for
+  Persuade prose (`landing-fintech`, `research/index.html`'s hand-authored copy). NOT
+  enforced for the Operate surface's dynamic, data-driven strings once real React
+  components took over (`RunHistoryPanel`'s list labels and status text, the compare
+  page's subhead) — those read closer to a data separator than persuasive prose, and
+  retrofitting them would mean rewriting copy pervasive across already-shipped,
+  already-tested components for a rule this specific text was never actually checked
+  against. Noted here rather than silently drifting further from the written rule.
 - **Max 1 eyebrow per 3 sections.** Eyebrows that just restate the headline below them
   get deleted.
 - Hero: max 4 text elements (eyebrow, headline, subtext, CTAs). No tagline under the
@@ -215,6 +230,12 @@ the background layer, not the section. Use `overflow-x: clip` on `body`, never `
   solid foreground), sized 20–22px in a 44px `grad-navy` tile. Match the headline
   literally. **Zoom-verify any curved icon at render size** — a bezier "scale" read as
   an unrecognisable blob at 22px until redrawn with lines and circles.
+- **Scoped exception: 🔔 on the push-notification button** (`RunStatusBanner.tsx`,
+  "Notify me" / "Notified"). Emoji, not hand-authored SVG — deliberate, not an
+  oversight: it costs zero asset work, and it matches the bell glyph every OS
+  notification-permission prompt already shows the same reader, which reads clearer
+  here than a bespoke duotone bell would. Redraw as SVG only if a second icon-bearing
+  button ships elsewhere and the mismatch starts reading as inconsistent — not before.
 
 ---
 
@@ -462,7 +483,45 @@ document.documentElement.classList.add('js-armed');   // first line the script r
 
 ---
 
-## 10. Verification checklist
+## 10. React app additions (no static mockup precedent)
+
+Everything in §§1-9 is extracted from a static HTML reference file (§0, §9) — build the
+mockup first, extract the pattern, then write the React component. The items below
+shipped the other way round: built directly in the live app, no preceding mockup.
+Noted here so a later re-extraction pass doesn't miss them, and so the gap from the
+usual workflow is a recorded decision, not silent drift.
+
+### Run comparison (two-up cards)
+
+`web/app/src/app/runs/compare/page.tsx` + `CompareCard.tsx`. Two runs, side by side,
+each a compact card (`rounded-[28px]`, the same card shell as every other section)
+rather than §9's "Risk / comparison table" `<table>` shape: that pattern fits three
+speakers against one fixed parameter set (a row × column lookup). This compares two
+*whole* runs, each carrying its own independent set of fields — reads as two peers,
+not as a 2-column table forcing every field into its own row.
+
+- `grid sm:grid-cols-2 gap-6`, the same breakpoint every other two-up grid on the site
+  already uses.
+- Reuses TheCall's rating badge and stat-`dl` markup at a smaller type scale — no new
+  visual language, just a compact restatement of an existing pattern.
+- Entry point is `RunHistoryPanel`'s sibling list (select two, "Compare selected"
+  appears), not a dedicated nav item or a bare URL a reader is expected to construct:
+  comparing is a follow-on action from "these runs disagreed," not a page someone
+  browses to cold.
+
+### Checkboxes
+
+First use of a native checkbox on the site (`RunHistoryPanel`'s run-selection, feeding
+the comparison above). No custom control: `<input type="checkbox"
+className="accent-[#1C6FE6] disabled:opacity-30">`. `accent-color` keeps native
+keyboard/touch behaviour intact for free, rather than hand-building a styled box.
+Disabled state (a run with no verdict yet — queued, running, or failed) drops to 30%
+opacity instead of hiding the control, so the row's shape stays constant whether or
+not that particular run is currently selectable.
+
+---
+
+## 11. Verification checklist
 
 Before calling a page done:
 
