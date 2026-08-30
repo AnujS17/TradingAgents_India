@@ -10,7 +10,7 @@ from datetime import date as Date
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class RunStatus(str, Enum):
@@ -288,6 +288,33 @@ class VapidPublicKey(BaseModel):
         description="URL-safe base64, uncompressed EC point -- pass directly "
         "as PushManager.subscribe's applicationServerKey."
     )
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    # 8 is OWASP's own minimum recommendation for a user-chosen password;
+    # 128 is a ceiling against pathologically long input, not a real
+    # constraint on any genuine password (Argon2 handles long inputs fine,
+    # this exists only to bound the work an unauthenticated caller can
+    # make the server do per request).
+    password: str = Field(min_length=8, max_length=128)
+    name: str | None = Field(default=None, max_length=256)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AuthUser(BaseModel):
+    """What NextAuth's Credentials `authorize()` needs back to build a
+    session -- the same shape POST /auth/register and POST /auth/login
+    both return, so the frontend has one response contract for both."""
+
+    sub: str
+    email: str
+    name: str | None
+    picture: str | None
 
 
 class HealthResponse(BaseModel):

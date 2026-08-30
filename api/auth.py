@@ -4,6 +4,12 @@ NextAuth (the Next.js frontend) issues the token; this module only ever
 verifies one, never issues one -- FastAPI has no login endpoint. See
 docs/superpowers/specs/2026-08-29-auth-rbac-design.md for the full
 architecture.
+
+Two ways to get a users row now: Google OAuth (get_or_create_user, called
+from POST /auth/bootstrap) and a password account (create_password_user,
+called from POST /auth/register). Both funnel through the same
+_atomic_insert_user helper below -- the first-admin-bootstrap race
+condition and the legacy-run backfill only need to be gotten right once.
 """
 
 from __future__ import annotations
@@ -12,6 +18,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated
 
 import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +29,38 @@ from api.settings import get_settings
 
 if TYPE_CHECKING:
     from api.db import User
+
+# Argon2id, the current OWASP-recommended default -- memory-hard (costly to
+# attack with GPUs/ASICs, unlike a bare SHA-256 or MD5 hash) and its own
+# verify() is constant-time by construction, so no separate hmac.compare_
+# digest dance is needed here the way it would be for a manual digest
+# comparison.
+_password_hasher = PasswordHasher()
+
+# A precomputed hash of a value nobody will ever actually submit as a
+# password. verify_password's "user not found" branch below still runs a
+# real Argon2 verify against this instead of short-circuiting straight to
+# False -- otherwise a nonexistent-email response returns measurably
+# faster than a wrong-password one, and that timing difference is exactly
+# what lets an attacker enumerate which emails have accounts.
+_DUMMY_HASH = PasswordHasher().hash("this-hash-is-never-matched-by-a-real-login-attempt")
+
+
+def hash_password(password: str) -> str:
+    return _password_hasher.hash(password)
+
+
+def verify_password(password: str, password_hash: str | None) -> bool:
+    """True iff `password` matches `password_hash`. Always does the real
+    Argon2 work (against _DUMMY_HASH when `password_hash` is None, i.e. no
+    account or a Google-only account with no password set) so a caller
+    cannot distinguish "no such account" / "no password set" / "wrong
+    password" by response timing -- see _DUMMY_HASH's own comment."""
+    try:
+        _password_hasher.verify(password_hash or _DUMMY_HASH, password)
+        return password_hash is not None
+    except VerifyMismatchError:
+        return False
 
 
 class InvalidToken(Exception):
@@ -65,15 +105,21 @@ class CurrentUser:
     tier: str
 
 
-async def get_or_create_user(
-    sessionmaker: async_sessionmaker,
+async def _atomic_insert_user(
+    session,
     *,
     google_sub: str,
     email: str,
     name: str | None,
     picture: str | None,
+    password_hash: str | None,
 ) -> User:
-    """Look up a user by Google's stable `sub`, or create one.
+    """INSERT one new users row, deciding admin-vs-user atomically, and
+    backfill legacy ownerless runs onto it if it won admin. Shared by
+    get_or_create_user (Google) and create_password_user (email/password)
+    -- both need the identical race-free bootstrap logic, and duplicating
+    it would risk the two drifting (one gaining the backfill fix, say,
+    without the other).
 
     The first row ever inserted into `users` becomes role="admin"; every
     one after is role="user". The count-and-decide and the INSERT are done
@@ -89,12 +135,65 @@ async def get_or_create_user(
     state as of this statement's start, and no other connection's write
     can interleave inside it.
 
+    Raises IntegrityError (uncaught) on a UNIQUE-constraint collision --
+    the caller decides what that means for its own identity key
+    (get_or_create_user's google_sub race vs. create_password_user's
+    already-registered-email check).
+    """
+    from api.db import User, new_run_id, utcnow
+
+    new_id = new_run_id()
+    created_at = utcnow()
+    insert_stmt = text(
+        """
+        INSERT INTO users (id, google_sub, email, name, picture, password_hash, role, tier, created_at, last_login_at)
+        SELECT :id, :google_sub, :email, :name, :picture, :password_hash,
+               CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+               'free', :created_at, :created_at
+        """
+    )
+    await session.execute(
+        insert_stmt,
+        {
+            "id": new_id,
+            "google_sub": google_sub,
+            "email": email,
+            "name": name,
+            "picture": picture,
+            "password_hash": password_hash,
+            "created_at": created_at,
+        },
+    )
+    await session.commit()
+
+    result = await session.execute(select(User).where(User.google_sub == google_sub))
+    user = result.scalar_one()
+
+    if user.role == "admin":
+        from api.db import Run
+
+        await session.execute(update(Run).where(Run.user_id.is_(None)).values(user_id=user.id))
+        await session.commit()
+
+    return user
+
+
+async def get_or_create_user(
+    sessionmaker: async_sessionmaker,
+    *,
+    google_sub: str,
+    email: str,
+    name: str | None,
+    picture: str | None,
+) -> User:
+    """Look up a user by Google's stable `sub`, or create one.
+
     If a *second* login for the SAME google_sub races this one (e.g. a
     double-tab first login), the UNIQUE constraint on google_sub makes the
     loser's INSERT raise IntegrityError -- caught below, and handled by
     re-selecting and returning the winner's row rather than raising.
     """
-    from api.db import User, new_run_id, utcnow
+    from api.db import User, utcnow
 
     async with sessionmaker() as session:
         existing = await session.execute(select(User).where(User.google_sub == google_sub))
@@ -108,29 +207,10 @@ async def get_or_create_user(
             await session.refresh(user)
             return user
 
-        new_id = new_run_id()
-        created_at = utcnow()
-        insert_stmt = text(
-            """
-            INSERT INTO users (id, google_sub, email, name, picture, role, tier, created_at, last_login_at)
-            SELECT :id, :google_sub, :email, :name, :picture,
-                   CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
-                   'free', :created_at, :created_at
-            """
-        )
         try:
-            await session.execute(
-                insert_stmt,
-                {
-                    "id": new_id,
-                    "google_sub": google_sub,
-                    "email": email,
-                    "name": name,
-                    "picture": picture,
-                    "created_at": created_at,
-                },
+            return await _atomic_insert_user(
+                session, google_sub=google_sub, email=email, name=name, picture=picture, password_hash=None
             )
-            await session.commit()
         except IntegrityError:
             # Someone else's INSERT for this exact google_sub won the race
             # between our "not found" lookup above and our own INSERT.
@@ -143,15 +223,68 @@ async def get_or_create_user(
                 raise
             return user
 
-        result = await session.execute(select(User).where(User.google_sub == google_sub))
-        user = result.scalar_one()
 
-        if user.role == "admin":
-            from api.db import Run
+class EmailAlreadyRegistered(Exception):
+    """Raised by create_password_user when the email is already taken --
+    by a password account or a Google account, either way a second
+    account for the same email is refused rather than silently linked
+    (linking here would let anyone who merely knows a victim's email
+    address register a password for it and share access to that Google
+    account's data; a deliberate "add a password to my existing account"
+    flow, from within an authenticated session, would be the safe way to
+    offer linking later -- out of scope for this endpoint)."""
 
-            await session.execute(update(Run).where(Run.user_id.is_(None)).values(user_id=user.id))
-            await session.commit()
 
+async def create_password_user(
+    sessionmaker: async_sessionmaker,
+    *,
+    email: str,
+    password: str,
+    name: str | None,
+) -> User:
+    """Register a new password account. Raises EmailAlreadyRegistered if
+    the email is already in use by any account (Google or password)."""
+    from api.db import User, new_run_id
+
+    async with sessionmaker() as session:
+        existing = await session.execute(select(User).where(User.email == email))
+        if existing.scalar_one_or_none() is not None:
+            raise EmailAlreadyRegistered(email)
+
+        try:
+            return await _atomic_insert_user(
+                session,
+                google_sub=f"local:{new_run_id()}",
+                email=email,
+                name=name,
+                picture=None,
+                password_hash=hash_password(password),
+            )
+        except IntegrityError as exc:
+            # The synthetic google_sub is generated fresh above and cannot
+            # collide; this can only mean a second registration for the
+            # same email raced the "not found" check above and won.
+            raise EmailAlreadyRegistered(email) from exc
+
+
+async def authenticate_password_user(sessionmaker: async_sessionmaker, *, email: str, password: str) -> "User | None":
+    """Verify email+password. Returns the user on success, None on any
+    failure (no such email, no password set on that account, or wrong
+    password) -- deliberately one outcome for the caller to branch on, the
+    same anti-enumeration principle get_current_user's uniform 401
+    already applies to bearer tokens."""
+    from api.db import User, utcnow
+
+    async with sessionmaker() as session:
+        result = await session.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+
+        if not verify_password(password, user.password_hash if user else None):
+            return None
+
+        user.last_login_at = utcnow()
+        await session.commit()
+        await session.refresh(user)
         return user
 
 

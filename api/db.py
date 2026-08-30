@@ -105,18 +105,36 @@ class Run(Base):
 
 
 class User(Base):
-    """A signed-in account. Identity is Google's `sub` claim, not email --
-    Google documents `sub` as the only stable per-user identifier; an email
-    address can be changed or reassigned, which would otherwise orphan (or
-    worse, hijack) a run history keyed on it."""
+    """A signed-in account, created via Google OAuth or a password
+    registration. Identity is `google_sub`, not email, for a Google account
+    -- Google documents `sub` as the only stable per-user identifier; an
+    email address can be changed or reassigned, which would otherwise
+    orphan (or worse, hijack) a run history keyed on it. A password
+    account has no real Google identity, so it gets a synthetic
+    `google_sub` instead (see that column's own comment) -- one identity
+    column, one lookup path, regardless of how the account signed up."""
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # For a Google account this is Google's own `sub` claim (a numeric
+    # string). For a password account (no Google identity at all) this is
+    # a synthetic "local:<new_run_id()>" value instead -- new_run_id() is
+    # 32 chars, well under this column's 64, and the "local:" prefix can
+    # never collide with a real numeric Google sub. Every piece of code
+    # downstream of this column (get_current_user, _find_user_by_sub, the
+    # JWT `sub` claim) treats the two identically: one column, one lookup,
+    # no branching required anywhere else in the app for which kind of
+    # account this is.
     google_sub: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(256), index=True)
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     picture: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Argon2id hash (api.auth.hash_password) for a password account. NULL
+    # for a Google-only account -- api.auth's login endpoint refuses to
+    # authenticate a NULL hash rather than treating it as "no password
+    # required."
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # "user" | "admin". Plain String, not an Enum column -- SQLite has no
     # native enum type, and the rest of this codebase (Run.status,
     # Run.profile) already stores its enums as plain strings for the same
@@ -244,6 +262,11 @@ async def create_tables() -> None:
             await conn.execute(text("ALTER TABLE runs ADD COLUMN resume BOOLEAN DEFAULT 0"))
         if "user_id" not in existing_columns:
             await conn.execute(text("ALTER TABLE runs ADD COLUMN user_id VARCHAR(32)"))
+
+        result = await conn.execute(text("PRAGMA table_info(users)"))
+        existing_user_columns = {row[1] for row in result.fetchall()}
+        if "password_hash" not in existing_user_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(256)"))
 
 
 def utcnow() -> datetime:
