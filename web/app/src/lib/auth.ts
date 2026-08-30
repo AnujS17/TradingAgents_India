@@ -1,4 +1,5 @@
 import type { NextAuthOptions } from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import jwt from 'jsonwebtoken';
 
@@ -72,6 +73,45 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
+    // Email+password. Unlike Google, this provider does no verification of
+    // its own -- POST /auth/login (api/routers/auth.py) does the real
+    // work (Argon2 verify, timing-safe against a dummy hash, rate
+    // limiting) and this is a thin passthrough to it. Returning `null`
+    // fails the sign-in with NextAuth's generic CredentialsSignin error;
+    // it never throws, so a network hiccup here reads to the user the
+    // same as a wrong password rather than a raw stack trace.
+    CredentialsProvider({
+      name: 'Credentials',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null;
+
+        let res: Response;
+        try {
+          res = await fetch(`${API_BASE_URL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: credentials.email, password: credentials.password }),
+          });
+        } catch (err) {
+          console.error('password login request failed', err);
+          return null;
+        }
+        if (!res.ok) return null;
+
+        const data = (await res.json()) as { sub: string; email: string; name: string | null; picture: string | null };
+        // `id` is what NextAuth's `user` param carries into the jwt
+        // callback below -- api.routers.auth's AuthUser.sub is this
+        // account's google_sub (real for a Google account, a synthetic
+        // "local:..." value for a password one; see api/db.py's User
+        // model comment), the same identity key get_current_user looks
+        // up everywhere else.
+        return { id: data.sub, email: data.email, name: data.name ?? undefined, image: data.picture ?? undefined };
+      },
+    }),
   ],
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: 'jwt', maxAge: SESSION_MAX_AGE_SECONDS },
@@ -115,8 +155,13 @@ export const authOptions: NextAuthOptions = {
     // does, and this is its only caller. Without it every user 401s forever
     // and the first-admin bootstrap never fires.
     async signIn({ account, profile }) {
-      // Only an OAuth handshake carries both; anything else (there is no
-      // other provider configured today) has no profile to bootstrap from.
+      // Only a Google OAuth handshake carries both account AND profile.
+      // Credentials sign-in has account but no profile (Credentials has no
+      // OIDC profile to speak of) -- and doesn't need bootstrapping here
+      // anyway, since POST /auth/register already created that row before
+      // this sign-in ever started; calling /auth/bootstrap again would
+      // just be a redundant upsert with claims this provider doesn't have
+      // (no picture from a password account).
       if (!account || !profile) return true;
 
       const googleProfile = profile as { sub?: string; email?: string; name?: string; picture?: string };
@@ -152,8 +197,8 @@ export const authOptions: NextAuthOptions = {
 
       return true;
     },
-    async jwt({ token, account, profile }) {
-      if (account && profile) {
+    async jwt({ token, account, profile, user }) {
+      if (account?.provider === 'google' && profile) {
         const googleProfile = profile as { sub?: string; email?: string; name?: string; picture?: string };
         token.sub = googleProfile.sub;
         // Captured so signBearerToken can forward them; Google returns all
@@ -162,6 +207,17 @@ export const authOptions: NextAuthOptions = {
         token.email = googleProfile.email;
         token.name = googleProfile.name;
         token.picture = googleProfile.picture;
+        token.role = 'user';
+        token.tier = 'free';
+      } else if (account?.provider === 'credentials' && user) {
+        // `user` is exactly what the Credentials provider's authorize()
+        // returned above -- id is /auth/login's `sub` (this account's
+        // google_sub, real or synthetic), already the identity key
+        // get_current_user looks up everywhere else.
+        token.sub = user.id;
+        token.email = user.email ?? undefined;
+        token.name = user.name ?? undefined;
+        token.picture = user.image ?? undefined;
         token.role = 'user';
         token.tier = 'free';
       }
