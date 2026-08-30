@@ -220,14 +220,27 @@ def test_propagate_sets_the_snapshot_date():
 @pytest.mark.unit
 def test_every_live_fetcher_is_wrapped():
     """A new live fetcher added without this decorator silently reintroduces
-    the drift, so enumerate them rather than trusting review."""
+    the drift, so enumerate them rather than trusting review.
+
+    2026-08-28: extended to the fundamentals and remaining news vendors --
+    these were the biggest unwrapped gap (the fundamentals analyst's 8-block
+    pre-fetch was entirely uncached beyond promoter bulk deals), which meant
+    a same-day re-run for a different time_horizon re-fetched everything
+    instead of replaying the frozen snapshot the way the six fetchers below
+    already did.
+    """
     from tradingagents.dataflows import (
+        alpha_vantage_common,
+        finnhub_news,
+        fx_rates,
         google_news,
         india_insider,
         india_news,
         nse_announcements,
         reddit,
         stocktwits,
+        y_finance,
+        yfinance_news,
     )
 
     expected = {
@@ -237,6 +250,15 @@ def test_every_live_fetcher_is_wrapped():
         stocktwits._fetch_stocktwits_messages_cached: "stocktwits",
         reddit._fetch_reddit_posts_cached: "reddit",
         india_insider._fetch_bulk_deals_csv: "nse_bulk_deals",
+        y_finance._fetch_info_cached: "yfinance_info",
+        y_finance._fetch_balance_sheet_csv: "yfinance_balance_sheet",
+        y_finance._fetch_cashflow_csv: "yfinance_cashflow",
+        y_finance._fetch_income_statement_csv: "yfinance_income_statement",
+        alpha_vantage_common._cached_api_request: "alpha_vantage",
+        finnhub_news._cached_api_request: "finnhub_news",
+        yfinance_news._fetch_news_cached: "yfinance_news",
+        yfinance_news._search_global_news_cached: "yfinance_global_news",
+        fx_rates._fetch_fx_rate_cached: "fx_rate",
     }
     for fn, namespace in expected.items():
         inner = getattr(fn, "__wrapped__", fn)

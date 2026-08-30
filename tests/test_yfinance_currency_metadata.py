@@ -10,6 +10,26 @@ from tradingagents.dataflows import y_finance
 FAKE_FX_RATE = SimpleNamespace(from_currency="TWD", to_currency="USD", rate=0.0309, as_of="2026-06-01")
 
 
+@pytest.fixture(autouse=True)
+def reset_yfinance_caches():
+    """Several tests below reuse ticker "UMC" with different mocked
+    ``.info``/statement data. y_finance's fetchers are now lru_cache'd (see
+    snapshot_cache.py), which is process-lifetime and args-only -- without
+    clearing it between tests, a later test with the same ticker would
+    silently read an earlier test's cached (and possibly stale) mock data
+    instead of exercising its own, exactly the hazard
+    test_india_news_fetcher.py's own reset_config fixture guards against."""
+    y_finance._fetch_info_cached.cache_clear()
+    y_finance._fetch_balance_sheet_csv.cache_clear()
+    y_finance._fetch_cashflow_csv.cache_clear()
+    y_finance._fetch_income_statement_csv.cache_clear()
+    yield
+    y_finance._fetch_info_cached.cache_clear()
+    y_finance._fetch_balance_sheet_csv.cache_clear()
+    y_finance._fetch_cashflow_csv.cache_clear()
+    y_finance._fetch_income_statement_csv.cache_clear()
+
+
 @pytest.mark.unit
 def test_fundamentals_includes_statement_and_quote_currency_warning():
     ticker = MagicMock()

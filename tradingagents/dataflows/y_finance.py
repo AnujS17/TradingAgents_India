@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import Annotated
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -7,20 +8,35 @@ import os
 import logging
 from .stockstats_utils import StockstatsUtils, _clean_dataframe, yf_retry, load_ohlcv, filter_financials_by_date, _prepare_ohlcv_for_wrap, normalize_indicator_value
 from .fx_rates import currency_mismatch_warning
+from .snapshot_cache import snapshot_cached
 from stockstats import wrap
 
 logger = logging.getLogger(__name__)
 
 
-def _statement_currency_warning(ticker_obj) -> str:
+@lru_cache(maxsize=64)
+@snapshot_cached("yfinance_info")
+def _fetch_info_cached(ticker: str) -> dict:
+    """Raw ``.info`` fetch, shared by get_fundamentals and every statement
+    function's currency-mismatch check -- previously each of the 4 public
+    functions below fetched ``.info`` independently (4 live calls per run for
+    data that cannot have changed between them), and none of it survived past
+    the process, so a same-day re-run (e.g. a different time_horizon) paid
+    for all 4 again. Returns {} rather than None so it stays JSON-safe.
+    """
+    ticker_obj = yf.Ticker(ticker.upper())
+    return yf_retry(lambda: ticker_obj.info) or {}
+
+
+def _statement_currency_warning(ticker: str) -> str:
     """Best-effort currency-mismatch warning for a financial-statement dump.
 
-    Fetches ``.info`` defensively — a metadata hiccup here must never break
-    the primary statement data, so any failure just means no warning gets
-    added, not an error for the whole call.
+    A metadata hiccup here must never break the primary statement data, so
+    any failure just means no warning gets added, not an error for the
+    whole call.
     """
     try:
-        info = yf_retry(lambda: ticker_obj.info) or {}
+        info = _fetch_info_cached(ticker)
     except Exception as exc:
         logger.warning("Could not fetch currency metadata: %s", exc)
         return ""
@@ -291,8 +307,7 @@ def get_fundamentals(
 ):
     """Get company fundamentals overview from yfinance."""
     try:
-        ticker_obj = yf.Ticker(ticker.upper())
-        info = yf_retry(lambda: ticker_obj.info)
+        info = _fetch_info_cached(ticker)
 
         if not info:
             return f"No fundamentals data found for symbol '{ticker}'"
@@ -346,6 +361,21 @@ def get_fundamentals(
         return f"Error retrieving fundamentals for {ticker}: {str(e)}"
 
 
+@lru_cache(maxsize=64)
+@snapshot_cached("yfinance_balance_sheet")
+def _fetch_balance_sheet_csv(ticker: str, freq: str, curr_date: str | None) -> str:
+    """Raw fetch as CSV text -- a DataFrame isn't JSON-safe for the snapshot
+    cache's disk persistence, so the CSV conversion (already needed by the
+    caller anyway) happens before caching rather than after."""
+    ticker_obj = yf.Ticker(ticker.upper())
+    if freq.lower() == "quarterly":
+        data = yf_retry(lambda: ticker_obj.quarterly_balance_sheet)
+    else:
+        data = yf_retry(lambda: ticker_obj.balance_sheet)
+    data = filter_financials_by_date(data, curr_date)
+    return data.to_csv() if not data.empty else ""
+
+
 def get_balance_sheet(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
@@ -353,31 +383,33 @@ def get_balance_sheet(
 ):
     """Get balance sheet data from yfinance."""
     try:
-        ticker_obj = yf.Ticker(ticker.upper())
+        csv_string = _fetch_balance_sheet_csv(ticker, freq, curr_date)
 
-        if freq.lower() == "quarterly":
-            data = yf_retry(lambda: ticker_obj.quarterly_balance_sheet)
-        else:
-            data = yf_retry(lambda: ticker_obj.balance_sheet)
-
-        data = filter_financials_by_date(data, curr_date)
-
-        if data.empty:
+        if not csv_string:
             return f"No balance sheet data found for symbol '{ticker}'"
-
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
 
         # Add header information
         header = f"# Balance Sheet data for {ticker.upper()} ({freq})\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
-        header += _statement_currency_warning(ticker_obj)
+        header += _statement_currency_warning(ticker)
 
         return header + csv_string
-        
+
     except Exception as e:
         return f"Error retrieving balance sheet for {ticker}: {str(e)}"
+
+
+@lru_cache(maxsize=64)
+@snapshot_cached("yfinance_cashflow")
+def _fetch_cashflow_csv(ticker: str, freq: str, curr_date: str | None) -> str:
+    ticker_obj = yf.Ticker(ticker.upper())
+    if freq.lower() == "quarterly":
+        data = yf_retry(lambda: ticker_obj.quarterly_cashflow)
+    else:
+        data = yf_retry(lambda: ticker_obj.cashflow)
+    data = filter_financials_by_date(data, curr_date)
+    return data.to_csv() if not data.empty else ""
 
 
 def get_cashflow(
@@ -387,31 +419,33 @@ def get_cashflow(
 ):
     """Get cash flow data from yfinance."""
     try:
-        ticker_obj = yf.Ticker(ticker.upper())
+        csv_string = _fetch_cashflow_csv(ticker, freq, curr_date)
 
-        if freq.lower() == "quarterly":
-            data = yf_retry(lambda: ticker_obj.quarterly_cashflow)
-        else:
-            data = yf_retry(lambda: ticker_obj.cashflow)
-
-        data = filter_financials_by_date(data, curr_date)
-
-        if data.empty:
+        if not csv_string:
             return f"No cash flow data found for symbol '{ticker}'"
-
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
 
         # Add header information
         header = f"# Cash Flow data for {ticker.upper()} ({freq})\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
-        header += _statement_currency_warning(ticker_obj)
+        header += _statement_currency_warning(ticker)
 
         return header + csv_string
-        
+
     except Exception as e:
         return f"Error retrieving cash flow for {ticker}: {str(e)}"
+
+
+@lru_cache(maxsize=64)
+@snapshot_cached("yfinance_income_statement")
+def _fetch_income_statement_csv(ticker: str, freq: str, curr_date: str | None) -> str:
+    ticker_obj = yf.Ticker(ticker.upper())
+    if freq.lower() == "quarterly":
+        data = yf_retry(lambda: ticker_obj.quarterly_income_stmt)
+    else:
+        data = yf_retry(lambda: ticker_obj.income_stmt)
+    data = filter_financials_by_date(data, curr_date)
+    return data.to_csv() if not data.empty else ""
 
 
 def get_income_statement(
@@ -421,26 +455,16 @@ def get_income_statement(
 ):
     """Get income statement data from yfinance."""
     try:
-        ticker_obj = yf.Ticker(ticker.upper())
+        csv_string = _fetch_income_statement_csv(ticker, freq, curr_date)
 
-        if freq.lower() == "quarterly":
-            data = yf_retry(lambda: ticker_obj.quarterly_income_stmt)
-        else:
-            data = yf_retry(lambda: ticker_obj.income_stmt)
-
-        data = filter_financials_by_date(data, curr_date)
-
-        if data.empty:
+        if not csv_string:
             return f"No income statement data found for symbol '{ticker}'"
-
-        # Convert to CSV string for consistency with other functions
-        csv_string = data.to_csv()
 
         # Add header information
         header = f"# Income Statement data for {ticker.upper()} ({freq})\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
-        header += _statement_currency_warning(ticker_obj)
+        header += _statement_currency_warning(ticker)
 
         return header + csv_string
         

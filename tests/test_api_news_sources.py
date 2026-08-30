@@ -2,10 +2,25 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tradingagents.dataflows import alpha_vantage_common, finnhub_news
 from tradingagents.dataflows.finnhub_news import get_news as get_finnhub_news
 from tradingagents.dataflows.gdelt_news import get_global_news as get_gdelt_global_news
 from tradingagents.dataflows.alpha_vantage_news import get_global_news as get_alpha_global_news
 from tradingagents.dataflows.alpha_vantage_news import get_news as get_alpha_company_news
+
+
+@pytest.fixture(autouse=True)
+def reset_vendor_caches():
+    """finnhub_news and alpha_vantage_news now route through lru_cache'd
+    helpers (see snapshot_cache.py); without clearing between tests, a test
+    later in this file re-using the same ticker/args would silently read a
+    prior test's cached (mocked) response instead of exercising its own
+    mock, the same hazard test_india_news_fetcher.py's fixture guards."""
+    finnhub_news._cached_api_request.cache_clear()
+    alpha_vantage_common._cached_api_request.cache_clear()
+    yield
+    finnhub_news._cached_api_request.cache_clear()
+    alpha_vantage_common._cached_api_request.cache_clear()
 
 
 @pytest.mark.unit
@@ -75,10 +90,13 @@ def test_alpha_vantage_global_news_accepts_none_defaults():
             ]
         }
     )
-    with patch("tradingagents.dataflows.alpha_vantage_news._make_api_request", return_value=raw) as request:
+    with patch("tradingagents.dataflows.alpha_vantage_news._cached_api_request", return_value=raw) as request:
         result = get_alpha_global_news("2026-06-02", None, None)
 
-    params = request.call_args.args[1]
+    # params now arrive as a tuple of pairs (_cached_api_request needs
+    # hashable args for lru_cache) rather than a dict -- see
+    # alpha_vantage_common._cached_api_request's docstring.
+    params = dict(request.call_args.args[1])
     assert params["time_from"] == "20260526T0000"
     assert params["time_to"] == "20260602T0000"
     assert params["limit"] == "5"
@@ -109,7 +127,7 @@ def test_alpha_vantage_company_news_is_formatted_not_raw_json():
             ]
         }
     )
-    with patch("tradingagents.dataflows.alpha_vantage_news._make_api_request", return_value=raw):
+    with patch("tradingagents.dataflows.alpha_vantage_news._cached_api_request", return_value=raw):
         result = get_alpha_company_news("SIEMENS.NS", "2026-07-10", "2026-08-10")
 
     assert "SIEMENS.NS News from Alpha Vantage" in result
@@ -123,7 +141,7 @@ def test_alpha_vantage_news_degrades_gracefully_on_malformed_response():
     """Fail open to an empty article list, not a crash, for a rate-limit
     payload or malformed body that slipped past _make_api_request's own
     check (see alpha_vantage_news.py's _parse_feed docstring)."""
-    with patch("tradingagents.dataflows.alpha_vantage_news._make_api_request", return_value="not json"):
+    with patch("tradingagents.dataflows.alpha_vantage_news._cached_api_request", return_value="not json"):
         result = get_alpha_global_news("2026-06-02", 7, 5)
 
     assert "No Alpha Vantage global news found" in result

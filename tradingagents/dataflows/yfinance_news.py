@@ -1,5 +1,6 @@
 """yfinance-based news data fetching functions."""
 
+from functools import lru_cache
 from typing import Optional
 
 import yfinance as yf
@@ -8,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 
 from .company_names import news_search_terms
 from .config import get_config
+from .snapshot_cache import snapshot_cached
 from .stockstats_utils import yf_retry
 
 
@@ -84,6 +86,19 @@ def _extract_article_data(article: dict) -> dict:
         }
 
 
+@lru_cache(maxsize=64)
+@snapshot_cached("yfinance_news")
+def _fetch_news_cached(ticker: str, article_limit: int) -> tuple[dict, ...]:
+    """Raw fetch, cached per (ticker, article_limit, snapshot date). The
+    vendor call itself takes no date range -- yfinance just returns its
+    latest N articles and the caller filters by date afterward -- so date
+    isn't part of this key; a different start_date/end_date within the same
+    day still replays the same underlying fetch, which is correct."""
+    stock = yf.Ticker(ticker)
+    news = yf_retry(lambda: stock.get_news(count=article_limit))
+    return tuple(news) if news else ()
+
+
 def get_news_yfinance(
     ticker: str,
     start_date: str,
@@ -102,8 +117,7 @@ def get_news_yfinance(
     """
     article_limit = get_config()["news_article_limit"]
     try:
-        stock = yf.Ticker(ticker)
-        news = yf_retry(lambda: stock.get_news(count=article_limit))
+        news = _fetch_news_cached(ticker, article_limit)
 
         if not news:
             return f"No news found for {ticker}"
@@ -144,6 +158,16 @@ def get_news_yfinance(
         return f"Error fetching news for {ticker}: {str(e)}"
 
 
+@lru_cache(maxsize=64)
+@snapshot_cached("yfinance_global_news")
+def _search_global_news_cached(query: str, news_count: int) -> tuple[dict, ...]:
+    """Raw per-query fetch, mirroring google_news.py's _search_cached for the
+    same reason: the query already encodes everything the search needs, one
+    entry per (query, news_count, snapshot date)."""
+    search = yf_retry(lambda: yf.Search(query=query, news_count=news_count, enable_fuzzy_query=True))
+    return tuple(search.news) if search.news else ()
+
+
 def get_global_news_yfinance(
     curr_date: str,
     look_back_days: Optional[int] = None,
@@ -174,25 +198,20 @@ def get_global_news_yfinance(
 
     try:
         for query in search_queries:
-            search = yf_retry(lambda q=query: yf.Search(
-                query=q,
-                news_count=limit,
-                enable_fuzzy_query=True,
-            ))
+            news_items = _search_global_news_cached(query, limit)
 
-            if search.news:
-                for article in search.news:
-                    # Handle both flat and nested structures
-                    if "content" in article:
-                        data = _extract_article_data(article)
-                        title = data["title"]
-                    else:
-                        title = article.get("title", "")
+            for article in news_items:
+                # Handle both flat and nested structures
+                if "content" in article:
+                    data = _extract_article_data(article)
+                    title = data["title"]
+                else:
+                    title = article.get("title", "")
 
-                    # Deduplicate by title
-                    if title and title not in seen_titles:
-                        seen_titles.add(title)
-                        all_news.append(article)
+                # Deduplicate by title
+                if title and title not in seen_titles:
+                    seen_titles.add(title)
+                    all_news.append(article)
 
             if len(all_news) >= limit:
                 break

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Optional
 
 import requests
 
 from .config import get_config
+from .snapshot_cache import snapshot_cached
 
 API_BASE_URL = "https://finnhub.io/api/v1"
 
@@ -23,13 +25,9 @@ def get_api_key() -> str:
 
 def get_news(ticker: str, start_date: str, end_date: str) -> str:
     """Retrieve company news for a ticker using Finnhub's company-news API."""
-    articles = _make_api_request(
+    articles = _cached_api_request(
         "/company-news",
-        {
-            "symbol": ticker,
-            "from": start_date,
-            "to": end_date,
-        },
+        (("symbol", ticker), ("from", start_date), ("to", end_date)),
     )
     if not articles:
         return f"No Finnhub news found for {ticker} between {start_date} and {end_date}"
@@ -55,13 +53,7 @@ def get_global_news(
 
     curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
     start_dt = curr_dt - timedelta(days=look_back_days)
-    articles = _make_api_request(
-        "/news",
-        {
-            "category": "general",
-            "minId": 0,
-        },
-    )
+    articles = _cached_api_request("/news", (("category", "general"), ("minId", 0)))
     filtered = [
         article
         for article in articles
@@ -87,6 +79,14 @@ def _make_api_request(path: str, params: dict) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError(f"Unexpected Finnhub response: {data}")
     return data
+
+
+@lru_cache(maxsize=64)
+@snapshot_cached("finnhub_news")
+def _cached_api_request(path: str, params_items: tuple) -> list[dict]:
+    """params_items is a tuple, not a dict -- lru_cache needs hashable args.
+    Raises exactly like _make_api_request; a failure is never cached."""
+    return _make_api_request(path, dict(params_items))
 
 
 def _article_in_range(article: dict, start_dt: datetime, end_dt: datetime) -> bool:

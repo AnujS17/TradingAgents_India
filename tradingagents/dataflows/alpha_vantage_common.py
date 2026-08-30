@@ -3,7 +3,10 @@ import requests
 import pandas as pd
 import json
 from datetime import datetime
+from functools import lru_cache
 from io import StringIO
+
+from .snapshot_cache import snapshot_cached
 
 API_BASE_URL = "https://www.alphavantage.co/query"
 
@@ -82,6 +85,23 @@ def _make_api_request(function_name: str, params: dict) -> dict | str:
 
     return response_text
 
+
+@lru_cache(maxsize=256)
+@snapshot_cached("alpha_vantage")
+def _cached_api_request(function_name: str, params_items: tuple) -> dict | str:
+    """Shared, snapshot-cached wrapper for every Alpha Vantage vendor call
+    (fundamentals, news, ...) that doesn't need per-call freshness within a
+    day. One namespace is safe to share across all of them: the cache key
+    already includes both function_name and params, so a BALANCE_SHEET
+    request and a NEWS_SENTIMENT request never collide.
+
+    ``params_items`` is ``tuple(sorted(params.items()))`` rather than a dict
+    -- lru_cache requires hashable arguments, and dicts aren't. Raises
+    exactly like ``_make_api_request`` (rate limit, HTTP failure); a caller
+    that fails is never cached, so a transient error can't get frozen for
+    the rest of the day the way a real result would be.
+    """
+    return _make_api_request(function_name, dict(params_items))
 
 
 def _filter_csv_by_date_range(csv_data: str, start_date: str, end_date: str) -> str:

@@ -21,6 +21,8 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Optional
 
+from .snapshot_cache import snapshot_cached
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,13 +35,35 @@ class FxRate:
 
 
 @lru_cache(maxsize=64)
+@snapshot_cached("fx_rate")
+def _fetch_fx_rate_cached(from_currency: str, to_currency: str) -> Optional[tuple[float, str]]:
+    """Raw fetch, split out so the cache stores a plain (rate, as_of) tuple --
+    FxRate itself is a dataclass, which snapshot_cached's JSON persistence
+    cannot serialise. Returns None for "no rows" (a real, cacheable answer,
+    same as an empty news search); raises on failure so a transient error
+    is never the thing that gets frozen for the rest of the day.
+    """
+    import yfinance as yf
+
+    pair = yf.Ticker(f"{from_currency}{to_currency}=X")
+    history = pair.history(period="5d")
+    closes = history["Close"].dropna()
+    if closes.empty:
+        return None
+    rate = float(closes.iloc[-1])
+    as_of = closes.index[-1]
+    as_of_str = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
+    return (rate, as_of_str)
+
+
 def fetch_fx_rate(from_currency: str, to_currency: str) -> Optional[FxRate]:
     """Fetch the live ``from_currency`` -> ``to_currency`` rate.
 
     Returns None (never raises) if the pair can't be resolved — a bad/rare
-    currency code, no network, or yfinance returning no rows. Cached per
-    process since a same-day rate lookup doesn't need to be repeated across
-    every fundamentals call in a single run.
+    currency code, no network, or yfinance returning no rows. Snapshot-cached
+    per (ticker pair, analysis date): a same-day rate lookup doesn't need to
+    be repeated across every fundamentals call in a single run, or across a
+    same-day re-run with a different time horizon.
     """
     from_currency = (from_currency or "").upper().strip()
     to_currency = (to_currency or "").upper().strip()
@@ -47,21 +71,16 @@ def fetch_fx_rate(from_currency: str, to_currency: str) -> Optional[FxRate]:
         return None
 
     try:
-        import yfinance as yf
-
-        pair = yf.Ticker(f"{from_currency}{to_currency}=X")
-        history = pair.history(period="5d")
-        closes = history["Close"].dropna()
-        if closes.empty:
-            logger.warning("No FX history returned for %s->%s", from_currency, to_currency)
-            return None
-        rate = float(closes.iloc[-1])
-        as_of = closes.index[-1]
-        as_of_str = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
-        return FxRate(from_currency=from_currency, to_currency=to_currency, rate=rate, as_of=as_of_str)
+        result = _fetch_fx_rate_cached(from_currency, to_currency)
     except Exception as exc:
         logger.warning("FX rate fetch failed for %s->%s: %s", from_currency, to_currency, exc)
         return None
+
+    if result is None:
+        logger.warning("No FX history returned for %s->%s", from_currency, to_currency)
+        return None
+    rate, as_of_str = result
+    return FxRate(from_currency=from_currency, to_currency=to_currency, rate=rate, as_of=as_of_str)
 
 
 def currency_mismatch_warning(

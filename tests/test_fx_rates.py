@@ -56,9 +56,45 @@ def test_figures_description_is_used_in_final_sentence():
 
 @pytest.mark.unit
 def test_fetch_fx_rate_degrades_gracefully_on_bad_pair():
-    fx_rates.fetch_fx_rate.cache_clear()
+    # lru_cache now lives on the private raw-fetch helper, not the public
+    # function -- see the snapshot-cache split below.
+    fx_rates._fetch_fx_rate_cached.cache_clear()
     with patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.history.side_effect = Exception("no data")
         result = fx_rates.fetch_fx_rate("ZZZ", "USD")
 
     assert result is None
+
+
+@pytest.mark.unit
+def test_fetch_fx_rate_is_snapshot_cached_across_process_boundaries(tmp_path):
+    """The point of this change: a same-day re-run (e.g. a different
+    time_horizon) must replay the rate instead of hitting yfinance again."""
+    from tradingagents.dataflows.config import get_config, set_config
+    from tradingagents.dataflows.snapshot_cache import clear_snapshot_date, set_snapshot_date
+    from tradingagents.default_config import DEFAULT_CONFIG
+
+    fx_rates._fetch_fx_rate_cached.cache_clear()
+    before = dict(get_config())
+    set_config({**DEFAULT_CONFIG, "data_cache_dir": str(tmp_path)})
+    set_snapshot_date("2026-08-28")
+    calls = []
+    try:
+        with patch("yfinance.Ticker") as mock_ticker:
+            import pandas as pd
+
+            history = pd.DataFrame({"Close": [83.12]}, index=pd.to_datetime(["2026-08-28"]))
+            mock_ticker.return_value.history.side_effect = lambda *a, **k: (calls.append(1), history)[1]
+
+            first = fx_rates.fetch_fx_rate("USD", "INR")
+            # A fresh interpreter shares no in-memory state -- clearing the
+            # in-process memo stands in for a brand new run's process.
+            fx_rates._fetch_fx_rate_cached.cache_clear()
+            second = fx_rates.fetch_fx_rate("USD", "INR")
+    finally:
+        set_config(before)
+        clear_snapshot_date()
+        fx_rates._fetch_fx_rate_cached.cache_clear()
+
+    assert first == second == FxRate(from_currency="USD", to_currency="INR", rate=83.12, as_of="2026-08-28")
+    assert len(calls) == 1, "second call must be served from the snapshot cache, not yfinance"
