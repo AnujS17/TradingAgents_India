@@ -41,10 +41,11 @@ def sessionmaker(tmp_path, monkeypatch):
     monkeypatch.setattr(db_module, "_engine", engine, raising=False)
     monkeypatch.setattr(db_module, "_sessionmaker", maker, raising=False)
 
-    # The login-attempt throttle is process-global state (api.routers.auth's
-    # own module dict) -- reset it per test so one test's failed attempts
+    # The login/register throttles are process-global state (api.routers.
+    # auth's own module dicts) -- reset per test so one test's attempts
     # can't bleed into the next and produce a spurious 429.
     auth_router_module._recent_failed_logins.clear()
+    auth_router_module._recent_registrations.clear()
 
     yield maker
 
@@ -188,3 +189,124 @@ def test_login_then_a_protected_route_succeeds_with_the_resulting_identity(clien
 
     resp = client.post("/analyze", json=payload, headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code in (200, 202), f"protected route rejected a freshly-registered user: {resp.status_code} {resp.text}"
+
+
+@pytest.mark.unit
+def test_registering_on_a_fresh_database_never_becomes_admin(client, sessionmaker):
+    """The very first row on a fresh database is normally admin
+    (test_auth.py::test_the_first_ever_signin_becomes_admin) -- but that
+    bootstrap must only be reachable through Google's OAuth handshake, not
+    through POST /auth/register, an unauthenticated HTTP endpoint anyone
+    can script against a fresh deployment before its operator ever signs
+    in for the first time."""
+    resp = client.post("/auth/register", json={"email": "attacker@evil.com", "password": "attacker-password-1"})
+    assert resp.status_code == 201
+
+    async def fetch():
+        async with sessionmaker() as session:
+            result = await session.execute(select(User).where(User.email == "attacker@evil.com"))
+            return result.scalar_one()
+
+    user = _run(fetch())
+    assert user.role == "user", "an anonymous registration became admin"
+
+
+@pytest.mark.unit
+def test_a_google_signin_after_a_password_registration_for_the_same_email_is_rejected(client):
+    """The reverse of test_registering_twice_with_the_same_email_is_rejected
+    -- users.email is UNIQUE regardless of which side registered first."""
+    reg = client.post("/auth/register", json={"email": "victim@x.com", "password": "correct-horse-battery"})
+    assert reg.status_code == 201
+
+    from api.auth import EmailAlreadyRegistered, get_or_create_user
+
+    with pytest.raises(EmailAlreadyRegistered):
+        _run(
+            get_or_create_user(
+                _current_sessionmaker(), google_sub="1234567890", email="victim@x.com", name="V", picture=None
+            )
+        )
+
+
+@pytest.mark.unit
+def test_registering_with_a_different_case_email_is_still_rejected_as_a_duplicate(client):
+    first = client.post("/auth/register", json={"email": "victim@x.com", "password": "correct-horse-battery"})
+    assert first.status_code == 201
+
+    second = client.post("/auth/register", json={"email": "Victim@X.com", "password": "a-different-password-2"})
+    assert second.status_code == 409
+
+
+@pytest.mark.unit
+def test_logging_in_with_a_different_case_email_still_finds_the_account(client):
+    client.post("/auth/register", json={"email": "victim@x.com", "password": "correct-horse-battery"})
+
+    resp = client.post("/auth/login", json={"email": "Victim@X.com", "password": "correct-horse-battery"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.unit
+def test_registration_attempts_are_rate_limited_regardless_of_success(client):
+    for i in range(10):
+        resp = client.post("/auth/register", json={"email": f"user{i}@x.com", "password": "correct-horse-battery"})
+        assert resp.status_code == 201
+
+    limited = client.post("/auth/register", json={"email": "one-more@x.com", "password": "correct-horse-battery"})
+    assert limited.status_code == 429
+    assert "Retry-After" in limited.headers
+
+
+@pytest.mark.unit
+def test_the_login_rate_limit_ignores_a_spoofed_x_forwarded_for_header(client):
+    """api.ratelimit.client_identity trusts X-Forwarded-For unconditionally
+    (documented there as a cost guardrail, not a security control) -- the
+    login/register throttle must NOT use it, or an attacker defeats the
+    whole limit with one extra header per request."""
+    for i in range(auth_router_module._LOGIN_ATTEMPT_MAX):
+        resp = client.post(
+            "/auth/login",
+            json={"email": "a@x.com", "password": "wrong-password"},
+            headers={"X-Forwarded-For": f"10.0.0.{i}"},
+        )
+        assert resp.status_code == 401, "a spoofed X-Forwarded-For must not bypass the throttle"
+
+    still_limited = client.post(
+        "/auth/login",
+        json={"email": "a@x.com", "password": "wrong-password"},
+        headers={"X-Forwarded-For": "10.0.0.99"},
+    )
+    assert still_limited.status_code == 429
+
+
+@pytest.mark.unit
+def test_a_distinct_bucket_tracks_failed_logins_per_target_email(client):
+    """A distributed attack (many source IPs, one target email) must still
+    be caught -- an IP-only bucket alone would let it through unbounded.
+    TestClient issues every request from the same fixed host, so this
+    checks the throttle's own state directly rather than simulating
+    distinct source IPs it cannot actually produce: the email-keyed
+    bucket (independent of whatever key the IP bucket used) must exist
+    and grow with each failure."""
+    for _ in range(3):
+        resp = client.post("/auth/login", json={"email": "victim@x.com", "password": "wrong-password"})
+        assert resp.status_code == 401
+
+    assert len(auth_router_module._recent_failed_logins.get("email:victim@x.com", [])) == 3
+
+
+@pytest.mark.unit
+def test_a_422_response_never_echoes_the_submitted_password(client):
+    # A distinctive value, not "short" -- Pydantic's own error type for
+    # this case is literally named "string_too_short", which would make a
+    # naive substring check on that word pass even if input redaction
+    # were broken.
+    submitted_password = "hunter2"
+    resp = client.post("/auth/register", json={"email": "a@x.com", "password": submitted_password})
+    assert resp.status_code == 422
+    assert submitted_password not in resp.text
+
+
+def _current_sessionmaker():
+    from api.db import get_sessionmaker
+
+    return get_sessionmaker()

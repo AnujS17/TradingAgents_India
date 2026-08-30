@@ -32,11 +32,19 @@ export default function LoginPage() {
           body: JSON.stringify({ email, password, name: name || undefined }),
         });
         if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
+          // A fixed message per status code, never the response body
+          // itself: an open channel to the backend's `detail` renders
+          // whatever a future handler happens to put there without a
+          // second look, and if it ever arrives as something other than
+          // a string, rendering it directly would throw.
           setError(
             res.status === 409
               ? 'An account with this email already exists. Try signing in instead.'
-              : body.detail?.[0]?.msg || body.detail || 'Could not create your account. Try again.',
+              : res.status === 422
+                ? 'Please check your email and password (at least 8 characters).'
+                : res.status === 429
+                  ? 'Too many attempts. Try again in a few minutes.'
+                  : 'Could not create your account. Try again.',
           );
           setSubmitting(false);
           return;

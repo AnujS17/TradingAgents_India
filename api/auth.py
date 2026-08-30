@@ -14,12 +14,13 @@ condition and the legacy-run backfill only need to be gotten right once.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -47,6 +48,15 @@ _DUMMY_HASH = PasswordHasher().hash("this-hash-is-never-matched-by-a-real-login-
 
 
 def hash_password(password: str) -> str:
+    """Synchronous, CPU-bound (Argon2id at m=65536 KiB, t=3, p=4 -- roughly
+    a third of a second per call). Callers MUST run this via
+    asyncio.to_thread, never awaited directly on the request-handling
+    coroutine: argon2-cffi's C implementation releases the GIL during the
+    hash, so a thread genuinely parallelises it, but called inline it
+    blocks this process's entire event loop -- every other in-flight
+    request, including unrelated ones like an SSE run stream -- for the
+    full duration. Measured directly: ~400ms of total event-loop freeze
+    per call when this was awaited inline."""
     return _password_hasher.hash(password)
 
 
@@ -55,12 +65,29 @@ def verify_password(password: str, password_hash: str | None) -> bool:
     Argon2 work (against _DUMMY_HASH when `password_hash` is None, i.e. no
     account or a Google-only account with no password set) so a caller
     cannot distinguish "no such account" / "no password set" / "wrong
-    password" by response timing -- see _DUMMY_HASH's own comment."""
+    password" by response timing -- see _DUMMY_HASH's own comment. Same
+    to_thread requirement as hash_password -- see its docstring."""
     try:
         _password_hasher.verify(password_hash or _DUMMY_HASH, password)
         return password_hash is not None
-    except VerifyMismatchError:
+    except VerificationError:
         return False
+    except InvalidHashError:
+        # Not VerificationError's subclass (it's a ValueError) -- a
+        # malformed/corrupt stored hash. Not reachable via hash_password's
+        # own output today, but a future hash-format change or a
+        # truncated column must fail the same way a wrong password does,
+        # not surface as a 500 that would itself be an enumeration oracle
+        # (500 = "this email has a broken hash", 401 = everything else).
+        return False
+
+
+async def hash_password_async(password: str) -> str:
+    return await asyncio.to_thread(hash_password, password)
+
+
+async def verify_password_async(password: str, password_hash: str | None) -> bool:
+    return await asyncio.to_thread(verify_password, password, password_hash)
 
 
 class InvalidToken(Exception):
@@ -113,6 +140,7 @@ async def _atomic_insert_user(
     name: str | None,
     picture: str | None,
     password_hash: str | None,
+    allow_admin_bootstrap: bool,
 ) -> User:
     """INSERT one new users row, deciding admin-vs-user atomically, and
     backfill legacy ownerless runs onto it if it won admin. Shared by
@@ -121,10 +149,23 @@ async def _atomic_insert_user(
     it would risk the two drifting (one gaining the backfill fix, say,
     without the other).
 
-    The first row ever inserted into `users` becomes role="admin"; every
-    one after is role="user". The count-and-decide and the INSERT are done
-    as a *single* SQL statement (INSERT ... SELECT with the role computed
-    by a CASE against a subquery on the same table) rather than a
+    ``allow_admin_bootstrap`` gates whether THIS insert is even eligible to
+    become the first-row admin -- create_password_user always passes
+    False. Completing Google's OAuth handshake is a real, if imperfect,
+    barrier (a browser, a Google account, the actual consent screen);
+    POST /auth/register has none of that -- it is a plain unauthenticated
+    HTTP endpoint. Without this gate, the very first `curl -X POST
+    /auth/register` against a fresh deployment -- fully scriptable, no
+    browser, no Google account, racing the operator's own first sign-in --
+    would win admin and the entire legacy-run backfill. Verified directly
+    (a security review executed exactly this against a fresh database
+    before this gate existed) that it worked.
+
+    The first row ever inserted into `users` becomes role="admin" only
+    when this call is itself eligible AND the table is still empty; every
+    other case is role="user". The count-and-decide and the INSERT are
+    done as a *single* SQL statement (INSERT ... SELECT with the role
+    computed by a CASE against a subquery on the same table) rather than a
     SELECT-then-INSERT pair. SQLite only ever lets one writer hold the
     write lock at a time, and that lock is held for the statement/
     transaction's whole duration -- so a two-statement "read the count,
@@ -144,11 +185,16 @@ async def _atomic_insert_user(
 
     new_id = new_run_id()
     created_at = utcnow()
+    role_case = (
+        "CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END"
+        if allow_admin_bootstrap
+        else "'user'"
+    )
     insert_stmt = text(
-        """
+        f"""
         INSERT INTO users (id, google_sub, email, name, picture, password_hash, role, tier, created_at, last_login_at)
         SELECT :id, :google_sub, :email, :name, :picture, :password_hash,
-               CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+               {role_case},
                'free', :created_at, :created_at
         """
     )
@@ -195,6 +241,8 @@ async def get_or_create_user(
     """
     from api.db import User, utcnow
 
+    email = email.strip().lower()
+
     async with sessionmaker() as session:
         existing = await session.execute(select(User).where(User.google_sub == google_sub))
         user = existing.scalar_one_or_none()
@@ -209,19 +257,32 @@ async def get_or_create_user(
 
         try:
             return await _atomic_insert_user(
-                session, google_sub=google_sub, email=email, name=name, picture=picture, password_hash=None
+                session,
+                google_sub=google_sub,
+                email=email,
+                name=name,
+                picture=picture,
+                password_hash=None,
+                allow_admin_bootstrap=True,
             )
         except IntegrityError:
-            # Someone else's INSERT for this exact google_sub won the race
-            # between our "not found" lookup above and our own INSERT.
-            # That row is the real one now -- fetch and return it instead
-            # of surfacing a raw constraint-violation error to the caller.
             await session.rollback()
+            # Two distinct causes collapse to the same IntegrityError here,
+            # both now real given users.email is UNIQUE too: (a) someone
+            # else's INSERT for this exact google_sub won the race between
+            # our "not found" lookup above and our own INSERT -- that row
+            # is the real one now, re-select and return it; (b) this email
+            # already belongs to a DIFFERENT account (e.g. a password
+            # account registered first) -- google_sub genuinely has no
+            # row, so re-selecting finds nothing, and creating a second
+            # row silently or 500ing on the raw constraint violation are
+            # both wrong. EmailAlreadyRegistered gives POST /auth/bootstrap
+            # a clear, deliberate 409 for this instead of either.
             existing_after = await session.execute(select(User).where(User.google_sub == google_sub))
             user = existing_after.scalar_one_or_none()
-            if user is None:
-                raise
-            return user
+            if user is not None:
+                return user
+            raise EmailAlreadyRegistered(email) from None
 
 
 class EmailAlreadyRegistered(Exception):
@@ -243,8 +304,17 @@ async def create_password_user(
     name: str | None,
 ) -> User:
     """Register a new password account. Raises EmailAlreadyRegistered if
-    the email is already in use by any account (Google or password)."""
+    the email is already in use by any account (Google or password).
+
+    Never eligible for admin (allow_admin_bootstrap=False, see
+    _atomic_insert_user) -- this is an unauthenticated HTTP endpoint;
+    completing Google's OAuth handshake is the only path that gets a
+    real shot at the first-row-becomes-admin bootstrap.
+    """
     from api.db import User, new_run_id
+
+    email = email.strip().lower()
+    password_hash = await hash_password_async(password)
 
     async with sessionmaker() as session:
         existing = await session.execute(select(User).where(User.email == email))
@@ -258,12 +328,15 @@ async def create_password_user(
                 email=email,
                 name=name,
                 picture=None,
-                password_hash=hash_password(password),
+                password_hash=password_hash,
+                allow_admin_bootstrap=False,
             )
         except IntegrityError as exc:
             # The synthetic google_sub is generated fresh above and cannot
-            # collide; this can only mean a second registration for the
-            # same email raced the "not found" check above and won.
+            # collide (see api/db.py's User.google_sub comment) -- with
+            # users.email now UNIQUE too, this can only mean a second
+            # registration for the same email raced the "not found" check
+            # above and won, or a Google account already owns this email.
             raise EmailAlreadyRegistered(email) from exc
 
 
@@ -275,14 +348,27 @@ async def authenticate_password_user(sessionmaker: async_sessionmaker, *, email:
     already applies to bearer tokens."""
     from api.db import User, utcnow
 
+    email = email.strip().lower()
+
     async with sessionmaker() as session:
         result = await session.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
+        # .first(), not .scalar_one_or_none(): users.email is UNIQUE going
+        # forward, but a row pair created before that constraint existed
+        # (or a future migration gap) must never turn a login attempt into
+        # an unhandled 500 -- which would itself be a distinguishable
+        # signal ("this email is broken") on top of being a crash.
+        user = result.scalars().first()
 
-        if not verify_password(password, user.password_hash if user else None):
+        if not await verify_password_async(password, user.password_hash if user else None):
             return None
 
         user.last_login_at = utcnow()
+        # Cheap now, awkward to retrofit: if _password_hasher's cost
+        # parameters are ever raised, existing accounts silently upgrade
+        # on their next successful login instead of being stranded on the
+        # old (weaker) parameters forever.
+        if user.password_hash is not None and _password_hasher.check_needs_rehash(user.password_hash):
+            user.password_hash = await hash_password_async(password)
         await session.commit()
         await session.refresh(user)
         return user

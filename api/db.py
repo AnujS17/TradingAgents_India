@@ -127,7 +127,15 @@ class User(Base):
     # no branching required anywhere else in the app for which kind of
     # account this is.
     google_sub: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(256), index=True)
+    # UNIQUE, not just indexed: one row per email regardless of how it
+    # signed up (Google or password) -- without this, registering a
+    # password account for an email a Google account already owns (or the
+    # reverse order) creates a second row instead of being rejected, and
+    # api.auth.authenticate_password_user's SELECT-by-email would find
+    # more than one match. api.auth normalizes to lowercase before every
+    # write and lookup (SQLite's default `=` is case-sensitive), so this
+    # constraint is meaningful rather than trivially bypassed by casing.
+    email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     picture: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Argon2id hash (api.auth.hash_password) for a password account. NULL
@@ -267,6 +275,15 @@ async def create_tables() -> None:
         existing_user_columns = {row[1] for row in result.fetchall()}
         if "password_hash" not in existing_user_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(256)"))
+
+        # A fresh create_all() already builds users.email UNIQUE (see the
+        # User model). An EXISTING table predating that change needs the
+        # index added explicitly -- ALTER TABLE cannot add a constraint to
+        # an existing column. This is expected to fail loudly (not be
+        # swallowed) if a real deployment already has duplicate emails --
+        # same "visible at startup, not a silent gap" policy as every
+        # other guarded migration in this function.
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_unique ON users(email)"))
 
 
 def utcnow() -> datetime:

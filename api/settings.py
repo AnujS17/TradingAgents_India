@@ -8,7 +8,7 @@ queue, limits) and is meaningless to a CLI or notebook caller.
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,6 +78,26 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:3000"]
     allowed_methods: list[str] = ["GET", "POST", "OPTIONS"]
     allowed_headers: list[str] = ["Authorization", "Content-Type"]
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _reject_wildcard_origin(cls, value: list[str]) -> list[str]:
+        """A bare "*" here isn't just permissive CORS -- POST /auth/register
+        and POST /auth/login create side effects (an account, a login
+        attempt) that a browser will happily send cross-origin once the
+        preflight is satisfied, regardless of whether the calling page can
+        read the response. allow_credentials=False (api/main.py) means a
+        real browser wouldn't even need a session cookie to trigger it.
+        Verified directly: with a wildcard origin, a cross-origin
+        POST /auth/register succeeds and creates a row. Fail closed at
+        startup instead of silently shipping that."""
+        if "*" in value:
+            raise ValueError(
+                'allowed_origins must not contain "*" -- POST /auth/register and '
+                "POST /auth/login are unauthenticated endpoints with real side "
+                "effects; list explicit origins instead."
+            )
+        return value
 
 
 @lru_cache
