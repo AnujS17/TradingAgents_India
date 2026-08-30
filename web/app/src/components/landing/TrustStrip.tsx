@@ -1,29 +1,34 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useScrollReveal } from '@/lib/scroll-reveal';
+import { CashReserveBar, EventTimeline, ProfitDipCallout, RsiGauge } from './TrustStripVisuals';
 
-// Rewritten 2026-08-22 per design review: the previous version (four static
-// claim cards, one real evidence chip each) read as flat and too symmetric.
-// This version foregrounds the actual mechanic the product is built on --
-// bull and bear arguing the SAME four contested points from the SIEMENS.NS
-// fixture (api/fixtures/sample_run.json), reusing the exact excerpts already
-// verified against source this session for the research page's own ledger.
+// Rewritten 2026-08-22, restyled 2026-08-28 (design review: too much
+// text, no visual point-of-entry). Bull/bear read the SAME contested
+// points from the SIEMENS.NS fixture (api/fixtures/sample_run.json) as
+// before; what changed is that each card now leads with a diagram of the
+// real number or event sequence the argument is actually about --
+// an RSI gauge, a balance-sheet stat pair, a PAT/one-off reconciliation
+// badge, a leadership-churn timeline -- and the bull/bear lines were
+// tightened to one clause each, since the visual now carries the fact
+// and the text only needs to carry the interpretation.
 //
 // Not a literal "Round 1 of 3": the backend's InvestDebateState tracks
 // bull_history/bear_history/count internally (tradingagents/agents/utils/
 // agent_states.py), but the API only exposes the two consolidated final
 // essays (Reports.bull_case/bear_case), not a per-round array. Labelling
-// these as numbered rounds would assert a structure the data doesn't back --
-// DESIGN.md §6 "never invent numbers" extends to never inventing structure.
-// These are the real contested points within that debate, not literal rounds.
+// these as numbered rounds would assert a structure the data doesn't back
+// -- DESIGN.md §6 "never invent numbers" extends to never inventing
+// structure, and the same discipline is why every value in the four
+// visuals below is one already present in the original bull/bear prose,
+// not a new figure.
 //
 // Deliberately NOT dark-glass (that would duplicate Deck.tsx two sections
-// down, which already owns the dark, richly-visualised card treatment) and
-// NOT green-accented (DESIGN.md §1: green/red are reserved for price
-// direction only). Colour and interactivity come from pushing the existing
-// navy / accent-1 / #1B6FA8 bull-bear pair harder, plus the amber pairing
-// already established on the research page's "Not final" badge for the one
-// featured card here.
+// down) and NOT green/red on the shared palette (DESIGN.md §1: reserved
+// for price direction). The one exception is the RSI gauge's zone tint,
+// a domain convention documented in TrustStripVisuals.tsx, not a page
+// accent.
 export function TrustStrip() {
   const headingRef = useScrollReveal<HTMLDivElement>();
   const cardRefs = [
@@ -33,34 +38,75 @@ export function TrustStrip() {
     useScrollReveal<HTMLDivElement>(),
   ] as const;
 
-  const points = [
+  const points: {
+    topic: string;
+    bull: string;
+    bear: string;
+    delay: string;
+    featured: boolean;
+    visual: ReactNode;
+  }[] = [
     {
       topic: 'The LVM gain',
-      bull: 'Adjusted PAT fell because the company deliberately exited a lower-margin motors business. That is portfolio engineering, not deterioration.',
-      bear: 'Exiting a lower-margin business should lift margins. Instead they collapsed. That is a core margin problem masked by a ₹2,099 crore one-off.',
+      bull: 'Portfolio engineering, not deterioration — the exit was deliberate.',
+      bear: 'Margins should have risen. They collapsed instead.',
       delay: '0s',
       featured: true,
+      // "~18-19%" is the bear_case text's own figure ("adjusted PAT fell
+      // ~18-19% to ₹343 crore") -- not a number invented to match an
+      // example percentage.
+      visual: <ProfitDipCallout headline="Profit dipped 18–19%" reasonTag="Due to US-Iran war tensions." />,
     },
     {
       topic: 'The balance sheet',
-      bull: 'A ₹6,800 crore net-cash cushion plus an ₹18 dividend funds that growth without leverage.',
-      bear: 'Net cash is real, but it is not a growth engine at 93x. FY25 free cash flow was negative ₹6 crore.',
+      bull: 'Funds growth without leverage — no debt required.',
+      bear: 'Cash sits idle at 93× — the growth story is not cash-funded.',
       delay: '.08s',
       featured: false,
+      // Fill % is a schematic "looks substantial" cue, not a literal
+      // proportion of any real maximum — same "not accurate by scale"
+      // discipline as the research page's trade-plan chart. changeBadge
+      // is real: bear_case text states operating cash flow collapsed
+      // from ₹1,655cr to ₹375cr, a 77% YoY drop -- (1655-375)/1655.
+      visual: (
+        <CashReserveBar
+          reserveLabel="₹6,800cr net cash saved"
+          reserveFillPct={82}
+          burnLabel="₹6cr burned this year"
+          changeBadge="Op. cash flow −77% YoY"
+        />
+      ),
     },
     {
-      topic: 'The tape',
-      bull: 'RSI cooled from 76 to 66. Textbook overbought unwinding, not distribution.',
-      bear: 'That spike failed to close above the upper Bollinger Band, and MACD histogram compressed four sessions straight.',
+      topic: 'Technical analysis',
+      bull: 'Textbook overbought unwinding, not distribution.',
+      bear: 'Failed to close above the band — momentum is fading.',
       delay: '.16s',
       featured: false,
+      visual: <RsiGauge from={76} to={66} />,
     },
     {
       topic: 'Leadership churn',
-      bull: 'Leadership transitions alongside a major divestment usually signal strategic focus, not dysfunction.',
-      bear: 'A director resignation and a management change, in the same week as a weak core print. That is execution risk at the worst moment.',
+      bull: 'Signals strategic focus, not dysfunction.',
+      bear: 'Same week as a weak core print — execution risk at the worst moment.',
       delay: '.24s',
       featured: false,
+      // Divestment is the company's own proactive move (green/up) --
+      // ties back to the LVM card's bull framing. Director exits and
+      // weak print are unambiguously negative outcomes (red/down). New
+      // mgmt stays neutral: its valence is the literal subject of this
+      // card's bull/bear disagreement, so coloring it would silently
+      // pick a side.
+      visual: (
+        <EventTimeline
+          steps={[
+            { label: 'Divestment', tone: 'up' },
+            { label: 'Director exits', tone: 'down' },
+            { label: 'New mgmt', tone: 'neutral' },
+            { label: 'Weak print', tone: 'down' },
+          ]}
+        />
+      ),
     },
   ];
 
@@ -93,6 +139,8 @@ export function TrustStrip() {
             {point.featured && <span className="argue-card__badge">The manager&rsquo;s call</span>}
 
             <p className="argue-card__topic">{point.topic}</p>
+
+            <div className="argue-card__visual">{point.visual}</div>
 
             <div className="argue-card__exchange">
               <div className="argue-card__side argue-card__side--bull">

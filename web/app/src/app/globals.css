@@ -113,7 +113,18 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
   color: var(--ink); letter-spacing: -.005em;
 }
 
-.argue-card__exchange { margin-top: 14px; display: flex; flex-direction: column; }
+/* The evidence visual (TrustStripVisuals.tsx, 2026-08-28): the real
+   number/sequence the card's argument turns on, given a diagram instead
+   of being buried in the bull/bear prose. Bordered top and bottom so it
+   reads as its own zone between the topic and the exchange, at a fixed
+   height so all four cards stay the same size despite very different
+   visual content (gauge vs. stat pair vs. timeline). */
+.argue-card__visual {
+  margin-top: 12px; padding: 10px 2px 0;
+  border-top: 1px solid var(--line-1);
+}
+
+.argue-card__exchange { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-1); display: flex; flex-direction: column; }
 .argue-card__who {
   display: block; font-family: 'Inter Tight', sans-serif; font-weight: 900; font-size: .6875rem;
   letter-spacing: .09em; text-transform: uppercase;
@@ -475,6 +486,69 @@ html { caret-color: #1C6FE6; scrollbar-color: #C3CEE4 transparent; scrollbar-wid
 .deck-progress span { display:block; height:100%; width:100%; border-radius:3px;
   transform:scaleX(0); transform-origin:left center;
   background:linear-gradient(90deg,#1C6FE6,#7FC4FF); }
+
+/* ── Call showcase card (CallShowcase.tsx, 2026-08-28, round 2) ───────
+   Layered/tiled treatment: a gradient-bordered, gently tilted card
+   (.call-showcase-frame -> .call-showcase-card) with a row of floating
+   real-call badges (.call-showcase-mover) stacked above it -- the same
+   "depth via overlapping cards" composition as the original SNDK/VSCO
+   reference, built from real data instead. .call-showcase-tag reuses
+   .viz-chip's rgba(255,255,255,.09) floating-pill device. */
+.call-showcase-wrap { perspective: 1400px; display: flex; flex-direction: column; align-items: center; }
+
+.call-showcase-movers {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
+  margin-bottom: -22px; position: relative; z-index: 2;
+}
+.call-showcase-mover {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(20,26,46,.92); backdrop-filter: blur(6px);
+  border: 1px solid rgba(127,196,255,.35);
+  border-radius: 999px; padding: 9px 14px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.4);
+}
+.call-showcase-mover__ticker { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .8125rem; color: #fff; }
+.call-showcase-mover__pct { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: .75rem; color: #7FC4FF; }
+
+.call-showcase-frame {
+  width: 100%; max-width: 480px;
+  border-radius: 27px; padding: 1.5px;
+  background: linear-gradient(135deg, #1C6FE6, #7FC4FF 45%, #00439D 100%);
+  box-shadow: 0 44px 90px -16px rgba(28,111,230,.5), 0 18px 40px rgba(0,0,0,.55);
+  transform: rotateX(9deg) rotateY(-13deg) rotateZ(-1deg);
+  transform-style: preserve-3d;
+  transition: transform .5s cubic-bezier(.22,1,.36,1);
+}
+.call-showcase-wrap:hover .call-showcase-frame { transform: rotateX(2deg) rotateY(-3deg) rotateZ(0deg); }
+.call-showcase-card {
+  position: relative; overflow: hidden;
+  border-radius: 25.5px;
+  background-color: #0A0F1E;
+  padding: 26px 24px 24px;
+}
+/* Glossy diagonal sheen — a soft highlight band suggesting a reflective
+   glass surface, matching the reference card's glossiness. */
+.call-showcase-sheen {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,.13) 0%, rgba(255,255,255,0) 30%);
+}
+.call-showcase-hero-pct {
+  font-family: 'Inter Tight', sans-serif; font-weight: 900; font-size: 2.75rem;
+  letter-spacing: -0.02em; color: #fff; line-height: 1;
+  text-shadow: 0 0 28px rgba(127,196,255,.55), 0 0 6px rgba(127,196,255,.4);
+}
+.call-showcase-tag {
+  display: inline-flex; align-items: center;
+  background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px; padding: 5px 10px;
+  font-family: 'Inter Tight', sans-serif; font-weight: 700; font-size: .6875rem;
+  color: rgba(255,255,255,.82); white-space: nowrap;
+}
+.call-showcase-tag--float { position: absolute; transform: translate(-4px, -4px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .call-showcase-frame { transform: none; }
+}
 
 /* pinned mode only where there is room to pin */
 @media (min-width: 1024px) {
