@@ -117,11 +117,41 @@ _BY_PATTERN: list[tuple[re.Pattern[str], ModelCapabilities]] = [
 ]
 
 
+def _strip_vendor_prefix(model_name: str) -> str:
+    """Drop an aggregator's ``vendor/`` prefix and any ``:variant`` suffix.
+
+    OpenRouter addresses the same model as ``deepseek/deepseek-v4-flash-0731``
+    where its own provider calls it ``deepseek-v4-flash``. Every key and
+    pattern in the tables above is written in the bare, provider-native
+    form, so a slug went through untouched, matched nothing, and silently
+    fell through to _DEFAULT -- which claims supports_tool_choice=True and
+    requires_reasoning_content_roundtrip=False, the exact opposite of what
+    a DeepSeek thinking model needs. The quirks this whole module exists to
+    encode were therefore never applied to any OpenRouter-routed DeepSeek
+    run (2026-08-26 to 2026-08-31).
+
+    Also strips a trailing variant (``:free``, ``:nitro``, ``:exacto``,
+    ``:floor``), which is a routing instruction to the aggregator rather
+    than part of the model's identity.
+
+    A bare name with neither is returned unchanged, so provider-native
+    callers are unaffected.
+    """
+    without_variant = model_name.split(":", 1)[0]
+    return without_variant.rsplit("/", 1)[-1]
+
+
 def get_capabilities(model_name: str) -> ModelCapabilities:
-    """Resolve capabilities by exact ID, then pattern, then default."""
-    if model_name in _BY_ID:
-        return _BY_ID[model_name]
-    for pattern, caps in _BY_PATTERN:
-        if pattern.match(model_name):
-            return caps
+    """Resolve capabilities by exact ID, then pattern, then default.
+
+    Tried on the name as given first so a provider-native id always wins,
+    then on the vendor-stripped form so an aggregator slug resolves to the
+    same entry.
+    """
+    for candidate in (model_name, _strip_vendor_prefix(model_name)):
+        if candidate in _BY_ID:
+            return _BY_ID[candidate]
+        for pattern, caps in _BY_PATTERN:
+            if pattern.match(candidate):
+                return caps
     return _DEFAULT

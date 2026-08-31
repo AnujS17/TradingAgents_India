@@ -72,13 +72,26 @@ _MINIMAX_MODELS: Dict[str, List[ModelOption]] = {
     ],
 }
 
+# GPT-5.6 Luna leads both lists because it is DEFAULT_CONFIG's model and,
+# unlike the open-weight options, it is served only by first-party
+# endpoints (OpenAI/Azure/Bedrock) -- no routing lottery across upstreams
+# of differing quantization and schema support. See default_config.py's
+# provider-routing block for the measurements behind that choice.
+#
+# The DeepSeek entries are kept as the open-weight alternative, at the
+# dated slug rather than the floating one so a silent upstream reshuffle
+# cannot change what a saved config resolves to.
 _OPENROUTER_MODELS: Dict[str, List[ModelOption]] = {
     "quick": [
+        ("GPT-5.6 Luna - First-party only, fast, reliable structured output", "openai/gpt-5.6-luna"),
+        ("DeepSeek V4 Flash - Open-weight, cheaper, many third-party hosts", "deepseek/deepseek-v4-flash-0731"),
         ("Poolside Laguna M.1 (free) - Agentic coding, reasoning, tools, 8K output", "poolside/laguna-m.1:free"),
         ("Poolside Laguna XS.2 (free) - Faster Poolside agentic model", "poolside/laguna-xs.2:free"),
         ("Custom model ID", "custom"),
     ],
     "deep": [
+        ("GPT-5.6 Luna - First-party only, strongest structured-output reliability", "openai/gpt-5.6-luna"),
+        ("DeepSeek V4 Pro - Open-weight, deeper reasoning, many third-party hosts", "deepseek/deepseek-v4-pro-0813"),
         ("Poolside Laguna M.1 (free) - Best Poolside agentic model, reasoning, tools, 8K output", "poolside/laguna-m.1:free"),
         ("Poolside Laguna XS.2 (free) - Faster fallback", "poolside/laguna-xs.2:free"),
         ("Custom model ID", "custom"),

@@ -194,9 +194,27 @@ def test_quantizations_env_override_parses_a_comma_separated_list():
 
 
 @pytest.mark.unit
-def test_openrouter_catalog_surfaces_poolside_laguna_m1():
+def test_openrouter_catalog_leads_with_the_configured_default_model():
+    """The catalog used to offer only Poolside models, so the CLI could not
+    select the model DEFAULT_CONFIG actually runs -- the two contradicted
+    each other. Whatever leads these lists should be what a run uses by
+    default, or the picker quietly steers users off it."""
     quick_ids = [model_id for _, model_id in get_model_options("openrouter", "quick")]
     deep_ids = [model_id for _, model_id in get_model_options("openrouter", "deep")]
 
-    assert quick_ids[0] == "poolside/laguna-m.1:free"
-    assert deep_ids[0] == "poolside/laguna-m.1:free"
+    assert quick_ids[0] == DEFAULT_CONFIG["quick_think_llm"] == "openai/gpt-5.6-luna"
+    assert deep_ids[0] == DEFAULT_CONFIG["deep_think_llm"] == "openai/gpt-5.6-luna"
+    # The open-weight alternative stays reachable, and Poolside is retained.
+    assert "deepseek/deepseek-v4-flash-0731" in quick_ids
+    assert "poolside/laguna-m.1:free" in quick_ids
+
+
+@pytest.mark.unit
+def test_checkpointing_is_enabled_so_a_dropped_stream_can_resume():
+    """A run is 4-14 minutes; KAYNES lost two consecutive attempts at ~8
+    minutes each on 2026-08-31 to a mid-body RemoteProtocolError from the
+    provider. That cannot be retried at the HTTP layer -- the response has
+    already begun, so the SDK's own retries never engage -- and with
+    checkpointing off there was nothing to resume from either, despite
+    api/worker.py telling the user they might be able to."""
+    assert DEFAULT_CONFIG["checkpoint_enabled"] is True

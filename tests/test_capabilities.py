@@ -121,3 +121,35 @@ def test_capabilities_dataclass_is_frozen():
     caps = get_capabilities("deepseek-chat")
     with pytest.raises(Exception):
         caps.supports_tool_choice = False  # type: ignore[misc]
+
+
+@pytest.mark.unit
+class TestAggregatorSlugs:
+    """OpenRouter addresses a model as ``vendor/model[:variant]`` while every
+    key and pattern in this table is written provider-native. Slugs used to
+    match nothing and fall through to _DEFAULT, so the DeepSeek quirks this
+    module exists to encode were never applied to any OpenRouter-routed
+    DeepSeek run (2026-08-26 to 2026-08-31) -- silently sending tool_choice
+    to a model documented to reject it."""
+
+    def test_vendor_prefixed_deepseek_gets_the_thinking_profile(self):
+        caps = get_capabilities("deepseek/deepseek-v4-flash-0731")
+        assert caps.supports_tool_choice is False
+        assert caps.requires_reasoning_content_roundtrip is True
+
+    def test_a_routing_variant_suffix_is_ignored(self):
+        """`:exacto` / `:free` / `:nitro` instruct the aggregator's router;
+        they are not part of the model's identity."""
+        caps = get_capabilities("deepseek/deepseek-v4-pro-0813:exacto")
+        assert caps.supports_tool_choice is False
+
+    def test_first_party_openai_slug_keeps_the_default_profile(self):
+        caps = get_capabilities("openai/gpt-5.6-luna")
+        assert caps.supports_tool_choice is True
+        assert caps.requires_reasoning_content_roundtrip is False
+
+    def test_bare_provider_native_ids_are_unaffected(self):
+        """The stripping must not change what already resolved correctly."""
+        assert get_capabilities("deepseek-v4-flash").supports_tool_choice is False
+        assert get_capabilities("deepseek-chat").supports_tool_choice is True
+        assert get_capabilities("MiniMax-M2.7").requires_reasoning_split is True

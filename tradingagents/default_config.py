@@ -261,7 +261,29 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # daily runs are unaffected.
     "snapshot_cache_enabled": True,
 
-    "checkpoint_enabled": False,
+    # ON since 2026-08-31. A run takes 4-14 minutes and a transient provider
+    # disconnect part-way through used to throw all of it away: KAYNES on
+    # 2026-08-31 lost two consecutive attempts at ~8 minutes each to
+    #   RemoteProtocolError: peer closed connection without sending complete
+    #   message body (incomplete chunked read)
+    # -- OpenRouter dropping the response stream mid-body. That class of
+    # failure cannot be retried at the HTTP client either: once the body has
+    # started arriving the request has already "succeeded" as far as the
+    # OpenAI SDK is concerned, so its own max_retries never engages. Resuming
+    # from the last completed node is the only layer that helps.
+    #
+    # The machinery for it was already built and tested (checkpointer.py,
+    # test_checkpoint_resume.py, test_streaming_checkpoint_resume.py, and the
+    # resume branch of propagate_streaming) and merely left switched off --
+    # this was the one setting in this file carrying no rationale at all.
+    # api/worker.py already surfaces "you may be able to resume it" on
+    # failure, which was untrue while this was False.
+    #
+    # Cost of having it on: a small per-ticker SQLite file under
+    # data_cache_dir/checkpoints. A normal (resume=False) run clears any
+    # stale checkpoint for its ticker+date before starting and clears its own
+    # on success, so these do not accumulate across successful runs.
+    "checkpoint_enabled": True,
     "output_language": "English",
 
     # Debate and discussion settings
