@@ -194,6 +194,52 @@ def _load_ohlcv_from_alpha_vantage(symbol: str, start_str: str, end_str: str) ->
     return parsed[["Open", "High", "Low", "Close", "Volume"]]
 
 
+# How long a cache file that does NOT reach curr_date is trusted before we
+# try the vendor again. Bounds the retry rate so a genuine holiday, a
+# suspended scrip, or a delisting cannot turn every call into a fresh
+# download, while still letting a run started an hour after the close pick
+# up that session once the vendor publishes it.
+_STALE_CACHE_RECHECK_SECONDS = 30 * 60
+
+
+def _cache_covers_date(data_file: str, curr_date_dt: pd.Timestamp) -> bool:
+    """Is this cache file new enough to answer for ``curr_date``?
+
+    load_ohlcv keys its cache on (symbol, today) and reuses it for the whole
+    day, which silently pins a run to whatever the vendor had published at
+    the FIRST fetch of that day. KAYNES.NS 2026-08-31: a run at 16:38 IST --
+    an hour after the 15:30 close -- wrote a cache whose last row was
+    2026-08-28, because yfinance had not yet published the 08-31 bar. Every
+    later run that day reused it, so a 19:51 IST run analysed three-day-old
+    prices and never saw a -6.5% session (3943 -> 3685). The file was
+    byte-identical to the previous day's, which is how it went unnoticed.
+
+    Returns True (use the cache) when it already contains a row on or after
+    curr_date, and when it does not but was written recently enough that
+    re-asking would just re-confirm the same answer. Returns False to force
+    a refetch. Any read failure returns False -- refetching is always safe,
+    trusting an unreadable cache is not.
+    """
+    try:
+        last = pd.read_csv(
+            data_file, usecols=lambda c: str(c).strip().lower() in ("date", "index"),
+            on_bad_lines="skip", encoding="utf-8",
+        )
+        if last.empty:
+            return False
+        dates = pd.to_datetime(last.iloc[:, 0], errors="coerce", utc=True).dropna()
+        if dates.empty:
+            return False
+        # tz-strip so a tz-aware cache compares against a naive curr_date.
+        if dates.max().tz_localize(None) >= curr_date_dt:
+            return True
+        age = time.time() - os.path.getmtime(data_file)
+        return age < _STALE_CACHE_RECHECK_SECONDS
+    except Exception as exc:  # noqa: BLE001 - a bad cache is a refetch, not an error
+        logger.warning("Could not date-check cache %s (%s); refetching", data_file, exc)
+        return False
+
+
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
@@ -227,7 +273,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
         except OSError as e:
             logger.error(f"Could not remove stale cache {data_file}: {e}")
 
-    if os.path.exists(data_file):
+    if os.path.exists(data_file) and _cache_covers_date(data_file, curr_date_dt):
         data = pd.read_csv(data_file, on_bad_lines="skip", encoding="utf-8")
     else:
         raw = yf_retry(lambda: yf.download(
@@ -247,27 +293,49 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
                     symbol,
                 )
                 raw = fallback
+            elif os.path.exists(data_file):
+                # We only got here because the cache did not reach curr_date,
+                # and now the vendors cannot better it. Stale data beats no
+                # data: before the freshness check existed this same cache
+                # would have been served without question, so falling back
+                # to it is the previous behaviour, not a new risk. Loudly
+                # logged because a run built on it is reading old prices.
+                logger.warning(
+                    "%s: no fresh vendor data; falling back to the existing "
+                    "cache, which does not reach %s",
+                    symbol, curr_date,
+                )
+                data = pd.read_csv(data_file, on_bad_lines="skip", encoding="utf-8")
+                raw = None
+                # Reset the staleness clock so a vendor that has simply not
+                # published yet is re-asked on a schedule rather than on
+                # every single call for the rest of the day.
+                os.utime(data_file, None)
             else:
                 raise ValueError(
                     f"yfinance returned no data for '{symbol}' "
                     f"({start_str} – {end_str}). Check the ticker symbol and network."
                 )
 
-        # Force index.name = "Date" before reset_index() so that the resulting
-        # column is always called 'Date' regardless of yfinance version.
-        if raw.index.name != "Date":
-            raw.index.name = "Date"
-        data = raw.reset_index()
+        # raw is None only on the stale-cache fallback above, where `data`
+        # is already loaded and must not be re-derived or re-written.
+        if raw is not None:
+            # Force index.name = "Date" before reset_index() so that the
+            # resulting column is always called 'Date' regardless of
+            # yfinance version.
+            if raw.index.name != "Date":
+                raw.index.name = "Date"
+            data = raw.reset_index()
 
-        # Belt-and-suspenders: normalise in case some yfinance version still
-        # produces a different name after the above assignment.
-        data = _normalise_date_column(data)
+            # Belt-and-suspenders: normalise in case some yfinance version
+            # still produces a different name after the above assignment.
+            data = _normalise_date_column(data)
 
-        # Only cache non-empty, valid data
-        if not data.empty and "Date" in data.columns:
-            data.to_csv(data_file, index=False, encoding="utf-8")
-        else:
-            logger.warning(f"Skipping cache write for {symbol}: data invalid after normalisation")
+            # Only cache non-empty, valid data
+            if not data.empty and "Date" in data.columns:
+                data.to_csv(data_file, index=False, encoding="utf-8")
+            else:
+                logger.warning(f"Skipping cache write for {symbol}: data invalid after normalisation")
 
     data = _clean_dataframe(data)
 
