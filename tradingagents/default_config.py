@@ -13,6 +13,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OPENROUTER_MAX_COMPLETION_TOKENS": "openrouter_max_completion_tokens",
     "TRADINGAGENTS_OPENROUTER_TEMPERATURE": "openrouter_temperature",
     "TRADINGAGENTS_OPENROUTER_TOP_P": "openrouter_top_p",
+    "TRADINGAGENTS_OPENROUTER_EXACTO": "openrouter_exacto",
+    "TRADINGAGENTS_OPENROUTER_QUANTIZATIONS": "openrouter_quantizations",
+    "TRADINGAGENTS_OPENROUTER_ONLY_PROVIDERS": "openrouter_only_providers",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
@@ -30,6 +33,12 @@ def _coerce(value: str, reference):
         return int(value)
     if isinstance(reference, float):
         return float(value)
+    # List-valued settings (openrouter_quantizations) arrive from the
+    # environment as one comma-separated string. An empty element is
+    # dropped rather than passed through as "", which OpenRouter would
+    # reject as an unknown quantization level.
+    if isinstance(reference, list):
+        return [item.strip() for item in value.split(",") if item.strip()]
     return value
 
 
@@ -79,6 +88,84 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "openrouter_max_completion_tokens": 8192,
     "openrouter_temperature": 0.2,
     "openrouter_top_p": 0.9,
+
+    # --- OpenRouter provider routing (2026-08-31) -------------------------
+    # OpenRouter routes one model slug across MANY independent upstream
+    # hosts. For deepseek-v4-flash-0731 there were 29 on 2026-08-31, and
+    # they are not equivalent:
+    #
+    #   * 8 of the 29 cannot enforce a JSON Schema. Three advertise no
+    #     `response_format` at all (Relace, BaseTen, CoreWeave); five more
+    #     support `response_format` but NOT `structured_outputs`
+    #     (DigitalOcean, StreamLake, GMICloud, Novita, and DeepSeek's own
+    #     endpoint). The second group implements JSON *mode*: valid JSON is
+    #     guaranteed, the schema is not compiled into a decoding grammar.
+    #     A schema-less grammar cannot forbid "" for a required string, so
+    #     the model may return {"rationale": ""} -- syntactically perfect,
+    #     semantically empty.
+    #   * Quantization ranges from bf16 (Morph only) through fp8 to fp4
+    #     (Sail Research, Relace, Ambient, Inceptron, Reka, AtlasCloud).
+    #     OpenRouter's own docs: "Quantized models may exhibit degraded
+    #     performance for certain prompts."
+    #
+    # That is the mechanism behind the empty Research Manager / Portfolio
+    # Manager reports observed 2026-08-29..30 (KAYNES, LENSKART, SAIL --
+    # `**Rationale**: ...`, `**Executive Summary**: (placeholder)`), which
+    # began after the 2026-08-26 switch from the direct `deepseek` provider
+    # to `openrouter`. Reproduced live at roughly a 1-in-5 rate per prose
+    # field, on both the flash and the pro model, so it is a routing
+    # property rather than a weak-model property.
+    #
+    # Excludes every fp4 host and every host reporting "unknown", keeping
+    # bf16 (Morph) and the fp8 tier. Widen to include "unknown" if this
+    # ever leaves too few providers to route to; set [] to disable the
+    # filter entirely.
+    "openrouter_quantizations": ["bf16", "fp8"],
+    # Explicit allowlist -- the bf16/fp8 hosts that advertise ALL of
+    # structured_outputs, seed, tools and tool_choice (measured 2026-08-31
+    # via /api/v1/models/<slug>/endpoints).
+    #
+    # This exists because the principled filter does NOT work here.
+    # OpenRouter's `require_parameters: true` is the intended way to demand
+    # schema enforcement, but it matches the request against each
+    # endpoint's ADVERTISED parameter list, and langchain unavoidably sends
+    # two parameters that NO endpoint advertises: `max_completion_tokens`
+    # (ChatOpenAI rewrites max_tokens to this) and `parallel_tool_calls`
+    # (added by with_structured_output's tool-calling path). The match set
+    # is therefore always empty and every call fails with
+    #   HTTP 404 "No endpoints found that can handle the requested
+    #   parameters."
+    # Confirmed by capturing the real request body off the wire, not
+    # inferred. So the capability guarantee has to be spelled out by name.
+    #
+    # Quantization filtering alone is NOT sufficient: CoreWeave, BaseTen,
+    # StreamLake, GMICloud and Novita are all fp8 yet lack
+    # structured_outputs, and a host without it implements JSON *mode*
+    # only -- valid JSON, schema not compiled into a decoding grammar, so
+    # nothing forbids {"rationale": ""}.
+    #
+    # STALENESS: this is a point-in-time snapshot of a roster OpenRouter
+    # changes without notice. Re-check with:
+    #   curl -s https://openrouter.ai/api/v1/models/<model-slug>/endpoints
+    # Set to [] to fall back to quantization filtering alone.
+    "openrouter_only_providers": [
+        "openinference", "akashml", "deepinfra", "morph",
+        "parasail", "mancer2", "nextbit",
+    ],
+    # OFF by default. `:exacto` is OpenRouter's quality-first variant,
+    # ranking upstreams by tool-calling telemetry -- which sounds ideal
+    # here, since with_structured_output() drives structured output through
+    # tool calling. Measured on 2026-08-31 it did not hold up:
+    #   * on its own it routed to Relace -- fp4, and one of the three hosts
+    #     with no response_format support whatsoever, i.e. the single worst
+    #     destination for this workload;
+    #   * paired with the quantization filter it still produced a collapsed
+    #     field (strategic_actions = 3 chars) and ran ~180s against ~65s
+    #     for the filter alone.
+    # It is a SORT, not a filter: it reorders candidates but never removes
+    # a bad one, which is why it cannot close this gap. Kept as a config
+    # key so it can be re-tested later without a code change.
+    "openrouter_exacto": False,
 
     # Sampling controls, applied to every provider by
     # TradingAgentsGraph._get_provider_kwargs. Before these existed only

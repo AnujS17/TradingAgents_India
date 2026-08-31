@@ -115,6 +115,36 @@ def _dedupe_tool_call(request, execute):
     )
 
 
+def apply_openrouter_variant(model: str, provider: str, exacto: bool) -> str:
+    """Append OpenRouter's ``:exacto`` variant to a model slug when enabled.
+
+    Exacto is a quality-first provider SORT: OpenRouter ranks upstreams by
+    real tool-calling success rates and its own benchmark harness, then
+    deprioritises the weak ones. It matters here because langchain's
+    ``with_structured_output()`` drives structured output through tool
+    calling -- the capability that was returning empty prose fields (see
+    default_config.py's OpenRouter provider-routing block).
+
+    Left alone in three cases, each of which would otherwise produce a slug
+    OpenRouter rejects or silently mis-routes:
+
+    * a non-openrouter provider, whose slugs have no variant concept at all;
+    * a slug that already carries a variant (``:free``, ``:nitro``,
+      ``:floor``, ``:exacto``) -- variants do not stack, and the catalog
+      really does ship one (``poolside/laguna-m.1:free``), so appending
+      would yield ``...:free:exacto``;
+    * an empty/None model, left for the client layer to report.
+
+    The variant is detected after the last ``/`` so a vendor segment can
+    never be mistaken for one.
+    """
+    if not exacto or not model or provider.lower() != "openrouter":
+        return model
+    if ":" in model.rsplit("/", 1)[-1]:
+        return model
+    return f"{model}:exacto"
+
+
 class StreamCancelled(Exception):
     """Raised by propagate_streaming() when should_stop() reports true
     between streamed chunks. Not an error -- a deliberate stop request.
@@ -162,15 +192,22 @@ class TradingAgentsGraph:
         if self.callbacks:
             llm_kwargs["callbacks"] = self.callbacks
 
+        _provider = self.config["llm_provider"]
+        _exacto = self.config.get("openrouter_exacto", False)
+
         deep_client = create_llm_client(
-            provider=self.config["llm_provider"],
-            model=self.config["deep_think_llm"],
+            provider=_provider,
+            model=apply_openrouter_variant(
+                self.config["deep_think_llm"], _provider, _exacto
+            ),
             base_url=self.config.get("backend_url"),
             **llm_kwargs,
         )
         quick_client = create_llm_client(
-            provider=self.config["llm_provider"],
-            model=self.config["quick_think_llm"],
+            provider=_provider,
+            model=apply_openrouter_variant(
+                self.config["quick_think_llm"], _provider, _exacto
+            ),
             base_url=self.config.get("backend_url"),
             **llm_kwargs,
         )
@@ -279,20 +316,45 @@ class TradingAgentsGraph:
             if effort:
                 kwargs["effort"] = effort
         elif provider == "openrouter":
+            # Built up across both blocks below, then attached once. It used
+            # to be created inside `if effort:`, which meant an unset
+            # openrouter_reasoning_effort silently discarded everything else
+            # that belongs in extra_body -- including the provider routing.
+            extra_body: Dict[str, Any] = {}
+
             effort = self.config.get("openrouter_reasoning_effort")
             if effort:
                 # OpenRouter's OpenAI-compatible chat endpoint accepts
                 # reasoning controls in extra_body. Passing top-level
                 # reasoning_effort can make langchain route through the
                 # OpenAI Responses API shape, which OpenRouter rejects.
-                kwargs["extra_body"] = {
-                    "reasoning": {
-                        "effort": effort,
-                        # Keep provider reasoning out of saved reports/logs
-                        # while still allowing internal reasoning tokens.
-                        "exclude": True,
-                    }
+                extra_body["reasoning"] = {
+                    "effort": effort,
+                    # Keep provider reasoning out of saved reports/logs
+                    # while still allowing internal reasoning tokens.
+                    "exclude": True,
                 }
+
+            # Provider routing. See default_config.py's own block for the
+            # incident and the measured provider capabilities behind these.
+            # Deliberately NO require_parameters: langchain always sends
+            # max_completion_tokens and parallel_tool_calls, which no
+            # endpoint advertises, so it matches zero endpoints and 404s
+            # every call. The `only` allowlist carries the capability
+            # guarantee instead -- see default_config.py for the evidence.
+            provider_prefs: Dict[str, Any] = {}
+            quantizations = self.config.get("openrouter_quantizations")
+            if quantizations:
+                provider_prefs["quantizations"] = list(quantizations)
+            only_providers = self.config.get("openrouter_only_providers")
+            if only_providers:
+                provider_prefs["only"] = list(only_providers)
+            if provider_prefs:
+                extra_body["provider"] = provider_prefs
+
+            if extra_body:
+                kwargs["extra_body"] = extra_body
+
             max_completion_tokens = self.config.get("openrouter_max_completion_tokens")
             if max_completion_tokens:
                 kwargs["max_completion_tokens"] = int(max_completion_tokens)
