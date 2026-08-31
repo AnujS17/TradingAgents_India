@@ -256,6 +256,21 @@ def _priced_state(proposal, decision, price):
     return state, patch.object(service, "_extract_current_price", return_value=price)
 
 
+def _priced_state_with_atr(proposal, decision, price, atr):
+    """A state whose _extract_current_price resolves to `price` and
+    _extract_atr resolves to `atr`."""
+    from unittest.mock import patch
+
+    import api.service as service
+
+    state = _state(proposal=proposal, decision=decision)
+    return state, patch.multiple(
+        service,
+        _extract_current_price=lambda s: price,
+        _extract_atr=lambda s: atr,
+    )
+
+
 @pytest.mark.unit
 def test_the_portfolio_managers_own_levels_win_over_the_traders():
     """The PM rules last, having read the Trader's proposal AND the full risk
@@ -412,3 +427,108 @@ def test_a_hold_still_clears_pm_supplied_levels():
     assert verdict.levels.entry_price is None
     assert verdict.levels.stop_loss is None
     assert verdict.price_target is None
+
+
+# ---------------------------------------------------------------------------
+# ATR-aware minimum stop distance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_a_stop_far_closer_than_ordinary_noise_is_dropped():
+    """SKYGOLD.NS 2026-08-31 (one run before the one that got it right):
+    entry 777 / stop 765, a 12-point gap against that day's real ATR of
+    33.69 -- 0.36 ATR, well inside a single session's ordinary noise. It
+    passed the schema's own stop<entry check and the implausible-level
+    guard (both in the right ballpark), and still was not a functioning
+    stop."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=777.0, stop_loss=765.0
+    )
+    state, patched = _priced_state_with_atr(proposal, None, 811.40, 33.69)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 777.0
+    assert verdict.levels.stop_loss is None
+
+
+@pytest.mark.unit
+def test_a_stop_at_a_sensible_atr_distance_survives():
+    """The very next SKYGOLD.NS run, same ticker and ATR: entry 774 / stop
+    740 is a 34-point gap -- essentially 1.0x ATR -- and must be kept
+    exactly as proposed."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=774.0, stop_loss=740.0
+    )
+    state, patched = _priced_state_with_atr(proposal, None, 811.40, 33.69)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 774.0
+    assert verdict.levels.stop_loss == 740.0
+
+
+@pytest.mark.unit
+def test_a_stop_exactly_at_the_floor_is_kept():
+    """The guard is a floor, not a target -- a stop AT 0.5x ATR (not under
+    it) must survive. ATR 40.0 -> floor is 20.0; a 20-point gap must pass.
+    Stop kept below entry throughout: this book is long-only, so a Sell's
+    stop still protects the retained portion of the position (see
+    TraderProposal's own long-only stop<entry rule) -- a stop ABOVE entry
+    would be dropped by that validator before this guard ever runs."""
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="x", entry_price=1020.0, stop_loss=1000.0
+    )
+    state, patched = _priced_state_with_atr(proposal, None, 1020.0, 40.0)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.stop_loss == 1000.0
+
+
+@pytest.mark.unit
+def test_the_guard_is_inert_with_no_atr_available():
+    """A young listing whose ATR is not computable (see
+    market_data_validator._MIN_PERIODS), or any vendor failure, must not
+    silently discard a stop it has no basis to judge -- _extract_atr
+    returning None means "cannot judge", not "reject"."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=777.0, stop_loss=765.0
+    )
+    state, patched = _priced_state_with_atr(proposal, None, 811.40, None)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.stop_loss == 765.0
+
+
+@pytest.mark.unit
+def test_a_tight_stop_on_a_low_volatility_stock_is_not_penalised():
+    """The guard scales with the instrument's OWN volatility, not an
+    absolute point distance -- the same 12-point gap that fails on
+    SKYGOLD's 33.69 ATR is a legitimate ~2.4x ATR stop on a much quieter
+    5.0-ATR stock, and must be kept."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=777.0, stop_loss=765.0
+    )
+    state, patched = _priced_state_with_atr(proposal, None, 811.40, 5.0)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.stop_loss == 765.0
+
+
+@pytest.mark.unit
+def test_only_the_stop_is_dropped_never_the_entry():
+    """A too-tight stop says nothing about whether the entry level itself
+    was well chosen -- entry must survive even when its stop does not."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=774.0, stop_loss=773.0
+    )
+    state, patched = _priced_state_with_atr(proposal, None, 811.40, 33.69)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 774.0
+    assert verdict.levels.stop_loss is None

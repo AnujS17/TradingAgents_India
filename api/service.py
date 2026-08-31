@@ -130,6 +130,54 @@ def _extract_current_price(state: dict) -> float | None:
         return None
 
 
+# A stop closer to its entry than this fraction of ATR is treated as not a
+# real stop. SKYGOLD.NS 2026-08-31, one run before the one that got the
+# level right: entry 777 / stop 765 -- a 12-point gap against that day's
+# ATR of 33.69, i.e. 0.36 ATR. Ordinary intraday noise clears that distance
+# without the thesis being wrong at all, so the "protection" it offered was
+# closer to a coin flip than a risk boundary. 0.5x is deliberately a FLOOR,
+# not a target: this product's horizons run 3-6+ months (a swing/position
+# style, not intraday scalping, where a sub-ATR stop can be a deliberate,
+# tight choice), so a stop this close to entry on a multi-month call is far
+# more likely an anchoring slip than a considered decision.
+_MIN_STOP_ATR_MULTIPLE = 0.5
+
+
+def _extract_atr(state: dict) -> float | None:
+    """Average True Range for the resolved ticker on the analysis date.
+
+    Reuses market_data_validator._calculate_latest_indicators against the
+    SAME load_ohlcv data _extract_current_price already fetched (a cache
+    hit, not a second computation path), so this can never disagree with
+    the verified market snapshot's own ATR value -- and it inherits that
+    function's minimum-history guard for free, so a young listing where ATR
+    "not computable (needs 14 sessions, ...)" correctly yields None here
+    too rather than a value nobody can trust.
+
+    Never raises. Returns None whenever ATR is unavailable for any reason
+    (short history, a vendor outage, a data shape wrap() rejects): the
+    guard that consumes this treats None as "cannot judge, so do not guard"
+    rather than as a reason to fail or discard anything.
+    """
+    from tradingagents.dataflows.market_data_validator import _calculate_latest_indicators
+    from tradingagents.dataflows.stockstats_utils import load_ohlcv
+
+    ticker = state.get("company_of_interest")
+    trade_date = state.get("trade_date")
+    if not ticker or not trade_date:
+        return None
+    try:
+        data = load_ohlcv(ticker, trade_date)
+        if data.empty:
+            return None
+        atr = _calculate_latest_indicators(data).get("atr")
+        if not isinstance(atr, (int, float)) or atr != atr:  # NaN != NaN
+            return None
+        return float(atr)
+    except Exception:  # noqa: BLE001 - enrichment only, never fail the run
+        return None
+
+
 def _extract_verdict(state: dict) -> Verdict:
     """Recover the structured decision from the rendered agent reports.
 
@@ -227,6 +275,27 @@ def _extract_verdict(state: dict) -> Verdict:
         # implausible one, a surviving stop is orphaned rather than useful.
         if entry_price is None and stop_loss is not None:
             stop_loss = None
+
+    # A stop can pass the two checks above (below entry, in the right
+    # ballpark) and still not function as a stop: SKYGOLD.NS 2026-08-31,
+    # entry 777 / stop 765, is 12 points against that day's ATR of 33.69 --
+    # 0.36 ATR, well inside a single session's ordinary noise. Only the
+    # stop is dropped, following the same "drop the questionable field, not
+    # the whole level pair" rule as the guard above: the entry itself is
+    # unaffected, since a too-tight stop says nothing about whether the
+    # entry level was well chosen.
+    if entry_price is not None and stop_loss is not None:
+        atr = _extract_atr(state)
+        if atr is not None and atr > 0:
+            min_distance = atr * _MIN_STOP_ATR_MULTIPLE
+            if abs(entry_price - stop_loss) < min_distance:
+                logger.warning(
+                    "Discarding stop_loss %.2f: %.2f from entry %.2f, "
+                    "under %.2fx ATR (%.2f)",
+                    stop_loss, abs(entry_price - stop_loss), entry_price,
+                    _MIN_STOP_ATR_MULTIPLE, atr,
+                )
+                stop_loss = None
 
     if rating == "Hold":
         action = "Hold"
