@@ -307,6 +307,62 @@ class PortfolioDecision(BaseModel):
             "opened or added to."
         ),
     )
+    # These two exist because the Portfolio Manager ROUTINELY works out the
+    # right levels and then had nowhere to put them. SKYGOLD.NS 2026-08-31:
+    # the executive summary said "trim into strength toward the 843-850
+    # resistance zone ... hard-stop below the consolidation range near
+    # 770-774" -- both correct against a 811.40 close (774.03 is literally
+    # the snapshot's Bollinger mid) -- while the card rendered the Trader's
+    # entry 5000 / stop 4200 on a stock whose 52-week high is 848, because
+    # api.service._extract_verdict had only the Trader's fields to read.
+    #
+    # The Trader still proposes first and its numbers are still used when
+    # these are absent (see _extract_verdict) -- this ADDS the final word,
+    # it does not remove the Trader's. Optional on purpose: a PM that has
+    # nothing to add leaves them null and nothing changes.
+    entry_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "Your own execution level in the instrument's quote currency, "
+            "overriding the Trader's if you disagree with it. The Trader "
+            "commits to its entry BEFORE the risk debate you have just "
+            "read, so it can be stale or unanchored; when your summary "
+            "names a level to act at, put that number here. Ground it in "
+            "the verified market data the analysts cited (a support or "
+            "resistance level, a moving average, a recent high or low) and "
+            "keep it in the same ballpark as the last traded price. Omit "
+            "(null) when rating is Hold, or when you are content with the "
+            "Trader's level and have nothing to correct."
+        ),
+    )
+    stop_loss: Optional[float] = Field(
+        default=None,
+        description=(
+            "Your own protective stop in the instrument's quote currency, "
+            "overriding the Trader's if you disagree with it. This book is "
+            "long-only, so it MUST be strictly BELOW entry_price whenever "
+            "you supply both — including on a Sell, where it guards the "
+            "portion of the position being retained rather than trimmed. "
+            "Ground it in a real level (below a support zone, a moving "
+            "average, an ATR multiple). Omit (null) when rating is Hold, "
+            "when the whole position is being exited, or when you are "
+            "content with the Trader's stop."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _drop_incoherent_levels(self) -> "PortfolioDecision":
+        """Same long-only coherence rule TraderProposal enforces, and for
+        the same reason: a stop at or above the entry is not a stop, and
+        rendering one is worse than rendering nothing because a reader can
+        size a position against protection that does not exist. Normalises
+        rather than raises -- a ValidationError here would fail the
+        structured parse and cost a second full LLM call (see
+        TraderProposal._drop_incoherent_levels)."""
+        if self.entry_price is not None and self.stop_loss is not None:
+            if self.stop_loss >= self.entry_price:
+                self.stop_loss = None
+        return self
     time_horizon: Optional[str] = Field(
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
@@ -330,6 +386,14 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     ]
     if decision.price_target is not None:
         parts.extend(["", f"**Price Target**: {decision.price_target}"])
+    # Distinct labels from the Trader's own "**Entry Price**"/"**Stop Loss**"
+    # so api.service._field can tell the two apart when both are present --
+    # it matches on a line-leading bold label, and reusing the Trader's
+    # wording here would make the PM's markdown indistinguishable.
+    if decision.entry_price is not None:
+        parts.extend(["", f"**PM Entry Price**: {decision.entry_price}"])
+    if decision.stop_loss is not None:
+        parts.extend(["", f"**PM Stop Loss**: {decision.stop_loss}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)

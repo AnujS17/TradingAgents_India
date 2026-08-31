@@ -12,9 +12,12 @@ request handler.
 
 from __future__ import annotations
 
+import logging
 from datetime import date as Date
 
 from api.schemas import AnalysisProfile, Reports, TradeLevels, Verdict
+
+logger = logging.getLogger(__name__)
 
 
 class RunCancelled(Exception):
@@ -173,10 +176,57 @@ def _extract_verdict(state: dict) -> Verdict:
 
     rating = _field(final, "Rating")
     action = _field(trader, "Action")
-    entry_price = _float_field(trader, "Entry Price")
-    stop_loss = _float_field(trader, "Stop Loss")
     position_sizing = _field(trader, "Position Sizing")
     price_target = _float_field(final, "Price Target")
+    current_price = _extract_current_price(state)
+
+    # The Portfolio Manager's own levels win when it supplied them. It rules
+    # last, having read the Trader's proposal AND the full risk debate, and
+    # it routinely works out better levels than the Trader had -- SKYGOLD.NS
+    # 2026-08-31: "trim toward the 843-850 resistance zone ... hard-stop
+    # near 770-774" against an 811.40 close, while the Trader's fields said
+    # entry 5000 / stop 4200. Falls back to the Trader's whenever the PM
+    # left a field null, which is the previous behaviour exactly, so a PM
+    # with nothing to correct changes nothing.
+    entry_price = _float_field(final, "PM Entry Price")
+    if entry_price is None:
+        entry_price = _float_field(trader, "Entry Price")
+    stop_loss = _float_field(final, "PM Stop Loss")
+    if stop_loss is None:
+        stop_loss = _float_field(trader, "Stop Loss")
+
+    # Last-resort guard on a level that cannot be transacted at. Both known
+    # failures were an order of magnitude out (SKYGOLD entry 5000 vs an 811
+    # close and a 848 52-week high; KAYNES entry 2600 vs 3943), and both
+    # passed the schema's own check because that only compares stop to entry
+    # and never to the market. Bounds are deliberately WIDE -- half to double
+    # the last close -- so every legitimate setup survives: a deep pullback
+    # entry, a breakout above resistance, a stop under a distant support all
+    # sit comfortably inside. This is not a view on whether a level is good,
+    # only on whether it belongs to this instrument at all.
+    #
+    # Drops rather than clamps, following TraderProposal.
+    # _drop_incoherent_levels: inventing a "corrected" number would be
+    # asserting a level nobody proposed, and a blank field already renders
+    # as "Not set" (DEV_HANDOFF.md: a blank field is meaningful).
+    if current_price is not None and current_price > 0:
+        lo, hi = current_price * 0.5, current_price * 2.0
+        if entry_price is not None and not (lo <= entry_price <= hi):
+            logger.warning(
+                "Discarding entry_price %.2f: outside %.2f-%.2f around last close %.2f",
+                entry_price, lo, hi, current_price,
+            )
+            entry_price = None
+        if stop_loss is not None and not (lo <= stop_loss <= hi):
+            logger.warning(
+                "Discarding stop_loss %.2f: outside %.2f-%.2f around last close %.2f",
+                stop_loss, lo, hi, current_price,
+            )
+            stop_loss = None
+        # A stop only means anything against an entry; if the entry was the
+        # implausible one, a surviving stop is orphaned rather than useful.
+        if entry_price is None and stop_loss is not None:
+            stop_loss = None
 
     if rating == "Hold":
         action = "Hold"
@@ -195,7 +245,7 @@ def _extract_verdict(state: dict) -> Verdict:
             stop_loss=stop_loss,
             position_sizing=position_sizing,
         ),
-        current_price=_extract_current_price(state),
+        current_price=current_price,
     )
 
 

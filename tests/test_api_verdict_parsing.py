@@ -239,3 +239,176 @@ def test_prose_containing_the_label_does_not_confuse_the_parser():
     verdict = _extract_verdict(_state(decision=decision))
 
     assert verdict.rating == "Hold"
+
+
+# ---------------------------------------------------------------------------
+# Portfolio Manager levels + implausible-level guard
+# ---------------------------------------------------------------------------
+
+
+def _priced_state(proposal, decision, price):
+    """A state whose _extract_current_price resolves to `price`."""
+    from unittest.mock import patch
+
+    import api.service as service
+
+    state = _state(proposal=proposal, decision=decision)
+    return state, patch.object(service, "_extract_current_price", return_value=price)
+
+
+@pytest.mark.unit
+def test_the_portfolio_managers_own_levels_win_over_the_traders():
+    """The PM rules last, having read the Trader's proposal AND the full risk
+    debate, and routinely works out better levels than the Trader had.
+    SKYGOLD.NS 2026-08-31: the PM said "trim toward the 843-850 resistance
+    zone ... hard-stop near 770-774" against an 811.40 close while the card
+    rendered the Trader's entry 5000 / stop 4200 -- because the PM had
+    nowhere structured to put what it had already worked out."""
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="Trim.", entry_price=5000.0, stop_loss=4200.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.UNDERWEIGHT,
+        executive_summary="Trim toward resistance.",
+        investment_thesis="Cash conversion is structurally weak.",
+        price_target=850.0,
+        entry_price=846.0,
+        stop_loss=772.0,
+    )
+    state, patched = _priced_state(proposal, decision, 811.40)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 846.0
+    assert verdict.levels.stop_loss == 772.0
+
+
+@pytest.mark.unit
+def test_the_traders_levels_are_still_used_when_the_pm_adds_nothing():
+    """The PM's fields are optional and additive -- a PM with nothing to
+    correct must leave the previous behaviour exactly intact."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="Momentum.", entry_price=3970.0, stop_loss=3800.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.OVERWEIGHT,
+        executive_summary="Add on strength.",
+        investment_thesis="Order book supports it.",
+        price_target=4300.0,
+    )
+    state, patched = _priced_state(proposal, decision, 3943.10)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 3970.0
+    assert verdict.levels.stop_loss == 3800.0
+
+
+@pytest.mark.unit
+def test_a_level_that_cannot_belong_to_this_instrument_is_dropped():
+    """SKYGOLD.NS 2026-08-31, reproduced: entry 5000 / stop 4200 on a stock
+    that closed at 811.40 and whose 52-week high is 848. Both passed the
+    schema's own check, which only compares stop to entry and never to the
+    market. Dropped rather than clamped -- inventing a corrected number
+    would assert a level nobody proposed."""
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="Trim.", entry_price=5000.0, stop_loss=4200.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.UNDERWEIGHT,
+        executive_summary="Trim into strength.",
+        investment_thesis="Cash flow is negative three years running.",
+        price_target=850.0,
+    )
+    state, patched = _priced_state(proposal, decision, 811.40)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price is None
+    assert verdict.levels.stop_loss is None
+    # The PM's own price target is unaffected -- it was never implausible.
+    assert verdict.price_target == 850.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "label,entry,stop,price",
+    [
+        ("deep pullback entry", 3470.0, 3300.0, 3943.10),
+        ("breakout above resistance", 4220.0, 3846.0, 3943.10),
+        ("the real luna KAYNES call", 4025.0, 3846.0, 3943.10),
+        ("accumulate on a 40% correction", 2400.0, 2200.0, 4000.0),
+    ],
+)
+def test_legitimate_setups_are_never_discarded(label, entry, stop, price):
+    """The guard exists to catch a level that cannot belong to the
+    instrument at all, NOT to opine on whether a level is well chosen. The
+    band is deliberately wide (half to double the last close) so every real
+    setup -- deep pullback, breakout, distant support stop -- survives."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning=label, entry_price=entry, stop_loss=stop
+    )
+    state, patched = _priced_state(proposal, None, price)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == entry, label
+    assert verdict.levels.stop_loss == stop, label
+
+
+@pytest.mark.unit
+def test_a_stop_is_dropped_when_its_entry_was_implausible():
+    """A stop only means something against an entry. If the entry was the
+    implausible one, a surviving stop is orphaned rather than useful."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=9000.0, stop_loss=800.0
+    )
+    state, patched = _priced_state(proposal, None, 811.40)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price is None
+    assert verdict.levels.stop_loss is None
+
+
+@pytest.mark.unit
+def test_the_guard_is_inert_when_no_current_price_could_be_resolved():
+    """_extract_current_price returns None on a vendor outage or an asset
+    with no OHLCV concept. With no reference price there is nothing to
+    judge against, so levels must pass through untouched rather than be
+    discarded on a data failure."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=5000.0, stop_loss=4200.0
+    )
+    state, patched = _priced_state(proposal, None, None)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 5000.0
+    assert verdict.levels.stop_loss == 4200.0
+
+
+@pytest.mark.unit
+def test_a_hold_still_clears_pm_supplied_levels():
+    """The Hold reconciliation must apply to the PM's own fields too, not
+    just the Trader's -- otherwise the new fields reopen the exact conflict
+    e950022 closed: 'Rating: Hold' beside a live, sizeable setup."""
+    decision = PortfolioDecision(
+        rating=PortfolioRating.HOLD,
+        executive_summary="Balanced.",
+        investment_thesis="Evidence cuts both ways.",
+        entry_price=846.0,
+        stop_loss=772.0,
+    )
+    state, patched = _priced_state(
+        TraderProposal(action=TraderAction.BUY, reasoning="x", entry_price=800.0, stop_loss=760.0),
+        decision,
+        811.40,
+    )
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.rating == "Hold"
+    assert verdict.levels.entry_price is None
+    assert verdict.levels.stop_loss is None
+    assert verdict.price_target is None
