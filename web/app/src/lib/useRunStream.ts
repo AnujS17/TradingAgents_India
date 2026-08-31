@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const API_BASE_URL =
-  typeof window === 'undefined'
-    ? process.env.API_BASE_URL ?? 'http://127.0.0.1:8000'
-    : process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
+// Same-origin, NOT the FastAPI base URL. EventSource cannot set request
+// headers (a spec limitation), so it can never send the bearer token the
+// backend's stream endpoint requires -- pointing it straight at FastAPI
+// returns 401 and the live view stays blank for the whole run. The route
+// handler at app/api/runs/[runId]/stream attaches the token server-side;
+// see its comment for why the backend endpoint is not simply opened up.
+const STREAM_BASE_PATH = '/api/runs';
 
 interface RunEventPayload {
   seq: number;
@@ -28,7 +31,7 @@ export function useRunStream(runId: string, enabled: boolean) {
       return;
     }
 
-    const source = new EventSource(`${API_BASE_URL}/runs/${runId}/stream`);
+    const source = new EventSource(`${STREAM_BASE_PATH}/${encodeURIComponent(runId)}/stream`);
     sourceRef.current = source;
 
     source.onmessage = (event) => {
