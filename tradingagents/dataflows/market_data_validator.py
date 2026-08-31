@@ -30,6 +30,45 @@ SNAPSHOT_INDICATORS = (
     "mfi",
 )
 
+# Trading rows an indicator needs before its value means what its NAME says.
+#
+# stockstats computes rolling windows with min_periods=1, so a "200 SMA" on a
+# stock with 199 sessions silently returns the mean of whatever exists rather
+# than NaN -- and we published that as an authoritative indicator.
+#
+# PINELABS.NS 2026-08-31 (listed 2025-11-14, 199 sessions): the snapshot
+# reported close_200_sma = 187.1495, which is EXACTLY the mean of all 199
+# available closes. Because the stock IPO'd near 250 and had fallen to 165,
+# that "long-term average" was really "average price since listing, dominated
+# by the post-IPO decline" -- and the analyst built a thesis on it, calling
+# 187 "the dominant overhead barrier ... the long-term trend is still down"
+# and turning it into a trade trigger: "Add only on a confirmed daily close
+# above 187 (200 SMA)". A fabricated level presented as a technical one.
+#
+# Only window-defined indicators appear here. The MACD family and the EMAs
+# are exponential: they weight recent data and have no hard minimum, so a
+# short history makes them noisy rather than meaningless, and dropping them
+# would remove real signal. Indicators absent from this map are always kept.
+_MIN_PERIODS = {
+    "close_50_sma": 50,
+    "close_200_sma": 200,
+    "boll": 20,
+    "boll_ub": 20,
+    "boll_lb": 20,
+    "vwma": 20,
+    "rsi": 14,
+    "atr": 14,
+    "mfi": 14,
+}
+
+# Rendered in place of the value, so the model SEES that the indicator was
+# unavailable and can caveat it, instead of the row silently vanishing and
+# leaving it to assume the data simply was not requested. Mirrors the
+# fundamentals analyst's "<block unavailable: ...>" markers, and matches how
+# deepseek's own PINELABS run handled it when its snapshot failed outright:
+# "close_200_sma: Not computable from available data".
+_INSUFFICIENT_HISTORY = "not computable (needs {needed} sessions, {have} available)"
+
 # Momentum/trend indicators where "is it rising or falling" changes the read
 # — not the whole SNAPSHOT_INDICATORS list. The other indicators (SMAs/EMA,
 # Bollinger bands, ATR, VWMA) are level-based: a single current value plus
@@ -141,8 +180,16 @@ def _calculate_latest_indicators(data: pd.DataFrame) -> dict[str, Any]:
     stock_df = wrap(ohlcv)
     latest_idx = len(date_series) - 1
 
+    available = len(date_series)
+
     indicators: dict[str, Any] = {}
     for indicator in SNAPSHOT_INDICATORS:
+        needed = _MIN_PERIODS.get(indicator)
+        if needed is not None and available < needed:
+            indicators[indicator] = _INSUFFICIENT_HISTORY.format(
+                needed=needed, have=available
+            )
+            continue
         try:
             values = stock_df[indicator]
             indicators[indicator] = normalize_indicator_value(
