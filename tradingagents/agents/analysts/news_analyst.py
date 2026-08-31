@@ -11,6 +11,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_report_style,
     is_length_limited,
     keeps_markdown_tables,
+    run_prefetches_concurrently,
     scale_word_budget,
 )
 from tradingagents.dataflows.config import get_config
@@ -31,28 +32,62 @@ def create_news_analyst(llm):
         asset_type = state.get("asset_type", "stock")
         asset_label = "company" if asset_type == "stock" else "asset"
         instrument_context = get_instrument_context_from_state(state)
-        company_news_block = get_news.func(ticker, start_date, current_date)
-        global_news_block = get_global_news.func(current_date)
-        india_global_news_block = fetch_global_india_news()
-        filings_block = fetch_corporate_announcements(ticker, current_date)
-        # StockTwits is normally the sentiment analyst's source, but for Indian
-        # equities its stream is heavily populated by news-wire accounts and it
-        # repeatedly carried material company news the wire feeds missed
-        # entirely (TMPV.NS 2026-08-10: JLR margin-guidance cut, July PV sales
-        # +59% YoY, Sanand plant flooding — none of which reached this agent).
-        # It is included as a lead source, explicitly marked unverified below,
-        # not as established fact.
-        social_wire_block = (
-            # Limit defaults to 30 to match the sentiment analyst's request.
-            # fetch_stocktwits_messages is lru_cached on (ticker, limit,
-            # timeout), so a different limit here is a cache miss and costs a
-            # second real network call for a subset of the same data — two
-            # fetches were observed on the BLUEJET run. Matching the limit
-            # makes the second call a cache hit.
-            fetch_stocktwits_messages(ticker, limit=config.get("news_stocktwits_limit", 30))
-            if config.get("news_include_stocktwits", True)
-            else ""
-        )
+
+        # Five independent network calls, each to a different vendor, none
+        # reading another's output — run concurrently rather than one at a
+        # time. Measured live, 2026-08-31: roughly 76% of a run's span after
+        # the first token had NO model output at all, and the pre-fetch
+        # phase (this block, across all four analysts) runs before any LLM
+        # call, so it is not even part of that 76% — it is pure added
+        # latency on top. fundamentals_analyst.py already parallelizes its
+        # own 8-fetch plan for the identical reason; this applies the same
+        # pattern here.
+        #
+        # StockTwits is normally the sentiment analyst's source, but for
+        # Indian equities its stream is heavily populated by news-wire
+        # accounts and it repeatedly carried material company news the wire
+        # feeds missed entirely (TMPV.NS 2026-08-10: JLR margin-guidance
+        # cut, July PV sales +59% YoY, Sanand plant flooding — none of which
+        # reached this agent). It is included as a lead source, explicitly
+        # marked unverified below, not as established fact. Limit defaults
+        # to 30 to match the sentiment analyst's request: fetch_stocktwits_
+        # messages is lru_cached on (ticker, limit, timeout), so a different
+        # limit here is a cache miss and costs a second real network call
+        # for a subset of the same data — two fetches were observed on the
+        # BLUEJET run. Matching the limit makes the second call a cache hit.
+        stocktwits_limit = config.get("news_stocktwits_limit", 30)
+        include_stocktwits = config.get("news_include_stocktwits", True)
+
+        plan = [
+            (
+                "get_news",
+                {"ticker": ticker, "start_date": start_date, "end_date": current_date},
+                lambda: get_news.func(ticker, start_date, current_date),
+            ),
+            (
+                "get_global_news",
+                {"curr_date": current_date},
+                lambda: get_global_news.func(current_date),
+            ),
+            ("fetch_global_india_news", {}, fetch_global_india_news),
+            (
+                "fetch_corporate_announcements",
+                {"ticker": ticker, "curr_date": current_date},
+                lambda: fetch_corporate_announcements(ticker, current_date),
+            ),
+        ]
+        if include_stocktwits:
+            plan.append(
+                (
+                    "fetch_stocktwits_messages",
+                    {"ticker": ticker, "scope": "news_wire"},
+                    lambda: fetch_stocktwits_messages(ticker, limit=stocktwits_limit),
+                )
+            )
+
+        results = run_prefetches_concurrently(plan)
+        company_news_block, global_news_block, india_global_news_block, filings_block = results[:4]
+        social_wire_block = results[4] if include_stocktwits else ""
 
         # Kept out of the f-string above so the whole section disappears when
         # StockTwits is disabled or unavailable, rather than leaving an empty

@@ -3,7 +3,7 @@ import functools
 import logging
 import re
 import time
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import yfinance as yf
 from langchain_core.messages import HumanMessage, RemoveMessage
@@ -545,6 +545,51 @@ def get_instrument_context_from_state(state: Mapping[str, Any]) -> str:
         str(state["company_of_interest"]),
         state.get("asset_type", "stock"),
     )
+
+
+def run_prefetches_concurrently(
+    plan: list[tuple[str, dict, Callable[[], str]]],
+) -> list[str]:
+    """Fetch every ``(name, args, thunk)`` in ``plan`` concurrently, returning
+    results in plan order regardless of completion order.
+
+    Same shape and behaviour as fundamentals_analyst.py's own
+    ``_run_prefetches``, generalised here so news_analyst.py and
+    sentiment_analyst.py can use it too: each fetches 4-5 independent
+    sources one at a time today, which serially costs roughly N times a
+    single round-trip on nodes that used to make far fewer calls, on top of
+    every source already being independent (different vendors, no source
+    reading another's output). That is exactly the latency the fast
+    profile exists to avoid, and it is the majority of a run's wall clock
+    -- streamed token generation is a MINORITY of it; the pre-fetch phase
+    that runs before any LLM call is invoked is where the time actually
+    goes (measured live, 2026-08-31: ~76% of a run's post-first-token span
+    had no model output at all, and starts even before that).
+
+    Failures are degraded to an inline ``<name unavailable: ...>`` marker
+    rather than raised, matching every deterministic fetcher's own
+    contract in this codebase (news_analyst.py's own comment: "Each
+    fetcher degrades gracefully and returns a string (no exceptions
+    surface from here)"). A missing source must not abort the whole
+    analysis, and the model needs to SEE that a block is missing so it can
+    caveat it rather than silently reasoning as though the data were
+    complete.
+
+    ``args`` is carried through the plan for call-site bookkeeping
+    (audit_tool_calls entries, statement/frequency lookups) but is not
+    used by this function itself.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(plan)) as pool:
+        futures = [pool.submit(thunk) for _, _, thunk in plan]
+        results = []
+        for (name, _args, _thunk), future in zip(plan, futures):
+            try:
+                results.append(str(future.result()))
+            except Exception as exc:  # noqa: BLE001 - degrade, never abort
+                results.append(f"<{name} unavailable: {exc}>")
+    return results
 
 
 def create_msg_delete(messages_key: str = "messages"):

@@ -43,6 +43,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
     get_news,
     get_india_market_instruction,
+    run_prefetches_concurrently,
 )
 from tradingagents.agents.utils.structured import (
     bind_structured,
@@ -99,19 +100,33 @@ def create_sentiment_analyst(llm):
         instrument_context = get_instrument_context_from_state(state)
         config = get_config()
 
-        # Pre-fetch all four sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
         # None (the default) means "use every subreddit"; the fast profile
         # narrows this to the top 3 by subscriber count (see
         # default_config.get_fast_config) to cut Reddit's worst-case fetch
         # time — subreddit count is the direct multiplier, since every miss
         # still queries every configured subreddit.
         reddit_subreddits = tuple(config.get("reddit_subreddits") or DEFAULT_SUBREDDITS)
-        reddit_block = fetch_reddit_posts(ticker, subreddits=reddit_subreddits)
-        india_news_block = fetch_ticker_india_news(ticker)
+
+        # Pre-fetch all four sources concurrently rather than one at a time
+        # — independent calls to four different vendors, none reading
+        # another's output, so serially they cost roughly 4x a single
+        # round-trip for no benefit. Each fetcher degrades gracefully and
+        # returns a string (no exceptions surface from here), so the LLM
+        # always sees something — either real data or a clear placeholder —
+        # and run_prefetches_concurrently's own degrade-to-marker handling
+        # is defence in depth on top of that, not the primary guard.
+        news_block, stocktwits_block, reddit_block, india_news_block = run_prefetches_concurrently(
+            [
+                ("get_news", {"ticker": ticker, "start_date": start_date, "end_date": end_date},
+                 lambda: get_news.func(ticker, start_date, end_date)),
+                ("fetch_stocktwits_messages", {"ticker": ticker, "limit": 30},
+                 lambda: fetch_stocktwits_messages(ticker, limit=30)),
+                ("fetch_reddit_posts", {"ticker": ticker, "subreddits": reddit_subreddits},
+                 lambda: fetch_reddit_posts(ticker, subreddits=reddit_subreddits)),
+                ("fetch_ticker_india_news", {"ticker": ticker},
+                 lambda: fetch_ticker_india_news(ticker)),
+            ]
+        )
 
         system_message = _build_system_message(
             ticker=ticker,
