@@ -16,6 +16,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OPENROUTER_EXACTO": "openrouter_exacto",
     "TRADINGAGENTS_OPENROUTER_QUANTIZATIONS": "openrouter_quantizations",
     "TRADINGAGENTS_OPENROUTER_ONLY_PROVIDERS": "openrouter_only_providers",
+    "TRADINGAGENTS_OPENROUTER_IGNORE_PROVIDERS": "openrouter_ignore_providers",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
@@ -60,14 +61,32 @@ DEFAULT_CONFIG = _apply_env_overrides({
 
     # LLM settings
     "llm_provider": "openrouter",
-    # Swapped to test openai/gpt-5.6-luna (2026-08-25). Not in
-    # capabilities.py's DeepSeek/MiniMax-specific tables, so it falls to
-    # _DEFAULT there (tool_choice/json_mode/json_schema all True,
-    # function-calling) -- a real API call is the actual validation, this
-    # is just confirming nothing hard-blocks an unlisted model. Revert to
-    # "deepseek/deepseek-v4-flash-0731" (both keys) to go back.
-    "deep_think_llm": "deepseek/deepseek-v4-flash-0731",
-    "quick_think_llm": "deepseek/deepseek-v4-flash-0731",
+    # gpt-5.6-luna, via OpenRouter (2026-08-31). Not in capabilities.py's
+    # DeepSeek/MiniMax-specific tables, so it falls to _DEFAULT there
+    # (tool_choice/json_mode/json_schema all True, function-calling).
+    #
+    # Chosen over deepseek-v4-flash-0731 to remove the provider lottery at
+    # the source rather than filter it. deepseek-v4-flash-0731 is served by
+    # 29 independent upstreams of which 8 cannot enforce a JSON Schema and
+    # six run fp4; gpt-5.6-luna is served by 7, ALL first-party (OpenAI /
+    # Azure / Amazon Bedrock), and only Bedrock lacks structured_outputs --
+    # one stable exclusion instead of a filter that has to track a roster
+    # OpenRouter changes without notice.
+    #
+    # Measured 2026-08-31 on the real Research Manager path, 5 trials each:
+    #   deepseek-v4-flash-0731  1/5 collapsed, 48-85s, prose 382-1530 chars
+    #   gpt-5.6-luna            0/5 collapsed,  8-9s,  prose 1001-1329 chars
+    # Roughly 9x faster with far tighter variance. It is dearer per call
+    # (~$0.0055 vs ~$0.0014 measured): input is cheaper ($0.10 vs $0.14/M)
+    # but output costs more ($0.60 vs $0.28/M), and reasoning tokens bill as
+    # output. Add provider sort "price" to reach OpenAI's cheaper Flex tier
+    # if that matters more than latency.
+    #
+    # Revert to "deepseek/deepseek-v4-flash-0731" (both keys) to go back --
+    # but see openrouter_quantizations below, which MUST be repopulated at
+    # the same time or the open-weight fp4 hosts come back with it.
+    "deep_think_llm": "openai/gpt-5.6-luna",
+    "quick_think_llm": "openai/gpt-5.6-luna",
     "backend_url": None,
 
     # Provider-specific thinking configuration
@@ -85,7 +104,15 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # "xhigh" (or try "medium"/"high" in between) if this trades away too
     # much analysis quality for the speed.
     "openrouter_reasoning_effort": "high",
-    "openrouter_max_completion_tokens": 8192,
+    # Raised from 8192 (2026-08-31). Reasoning tokens bill against this
+    # SAME budget as the answer -- `reasoning.exclude=True` only hides them
+    # from the response body, it does not stop them consuming the cap. A
+    # measured call spent 5885 of 6771 completion tokens on reasoning (87%),
+    # leaving the prose fields to fit in what remained; every arm of the
+    # routing comparison also threw a LengthFinishReasonError at 8192.
+    # Raising the ceiling costs nothing on its own -- billing is on tokens
+    # actually produced, not on the cap.
+    "openrouter_max_completion_tokens": 32768,
     "openrouter_temperature": 0.2,
     "openrouter_top_p": 0.9,
 
@@ -116,14 +143,37 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # field, on both the flash and the pro model, so it is a routing
     # property rather than a weak-model property.
     #
-    # Excludes every fp4 host and every host reporting "unknown", keeping
-    # bf16 (Morph) and the fp8 tier. Widen to include "unknown" if this
-    # ever leaves too few providers to route to; set [] to disable the
-    # filter entirely.
-    "openrouter_quantizations": ["bf16", "fp8"],
-    # Explicit allowlist -- the bf16/fp8 hosts that advertise ALL of
-    # structured_outputs, seed, tools and tool_choice (measured 2026-08-31
-    # via /api/v1/models/<slug>/endpoints).
+    # EMPTY on purpose while the model is gpt-5.6-luna. A quantization
+    # filter only means something for an open-weight model served by many
+    # third parties at different precisions. All 7 first-party gpt-5.6-luna
+    # endpoints report quantization "unknown", so ["bf16","fp8"] matches
+    # NONE of them and every call fails:
+    #   HTTP 404 "No endpoints found for the request with quantization"
+    # (verified live before shipping this switch).
+    #
+    # Repopulate with ["bf16","fp8"] if reverting to an open-weight model
+    # such as deepseek-v4-flash-0731, where it excludes six fp4 hosts.
+    "openrouter_quantizations": [],
+    # Hosts to exclude by name. gpt-5.6-luna's 7 endpoints are all
+    # first-party and 6 of the 7 support structured_outputs; Amazon Bedrock
+    # is the sole exception, and a host without structured_outputs
+    # implements JSON *mode* only -- valid JSON with the schema never
+    # compiled into a decoding grammar, so nothing forbids
+    # {"rationale": ""}. One stable exclusion replaces the roster-tracking
+    # allowlist the open-weight model needed.
+    "openrouter_ignore_providers": ["amazon-bedrock"],
+    # EMPTY on purpose while the model is gpt-5.6-luna: the names below are
+    # DeepSeek hosts and none of them serve this model, so a non-empty
+    # value here fails every call with
+    #   HTTP 404 "No allowed providers are available for the selected model"
+    # (verified live before shipping this switch). Kept as a key, with the
+    # measured list preserved in this comment, so reverting to an
+    # open-weight model is a copy-paste rather than a re-measurement:
+    #   ["openinference", "akashml", "deepinfra", "morph",
+    #    "parasail", "mancer2", "nextbit"]
+    # -- the bf16/fp8 hosts advertising ALL of structured_outputs, seed,
+    # tools and tool_choice (measured 2026-08-31 via
+    # /api/v1/models/<slug>/endpoints).
     #
     # This exists because the principled filter does NOT work here.
     # OpenRouter's `require_parameters: true` is the intended way to demand
@@ -148,10 +198,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # changes without notice. Re-check with:
     #   curl -s https://openrouter.ai/api/v1/models/<model-slug>/endpoints
     # Set to [] to fall back to quantization filtering alone.
-    "openrouter_only_providers": [
-        "openinference", "akashml", "deepinfra", "morph",
-        "parasail", "mancer2", "nextbit",
-    ],
+    "openrouter_only_providers": [],
     # OFF by default. `:exacto` is OpenRouter's quality-first variant,
     # ranking upstreams by tool-calling telemetry -- which sounds ideal
     # here, since with_structured_output() drives structured output through

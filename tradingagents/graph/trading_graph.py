@@ -349,6 +349,9 @@ class TradingAgentsGraph:
             only_providers = self.config.get("openrouter_only_providers")
             if only_providers:
                 provider_prefs["only"] = list(only_providers)
+            ignore_providers = self.config.get("openrouter_ignore_providers")
+            if ignore_providers:
+                provider_prefs["ignore"] = list(ignore_providers)
             if provider_prefs:
                 extra_body["provider"] = provider_prefs
 

@@ -43,21 +43,52 @@ def _openrouter_graph(**overrides):
 
 
 @pytest.mark.unit
-def test_openrouter_routing_pins_schema_capable_unquantized_providers():
-    """8 of the 29 upstreams serving deepseek-v4-flash-0731 on 2026-08-31
-    could not enforce a JSON Schema, which is how empty `**Rationale**:`
-    reports reached the UI. Quantization filtering alone does not close
-    that: CoreWeave, BaseTen, StreamLake, GMICloud and Novita are all fp8
-    yet lack structured_outputs, so the allowlist names the capable hosts
-    explicitly."""
+def test_openrouter_routing_excludes_the_one_schema_incapable_endpoint():
+    """gpt-5.6-luna is served by 7 first-party endpoints, 6 of which
+    support structured_outputs. Amazon Bedrock is the sole exception, and a
+    host without structured_outputs implements JSON *mode* only -- valid
+    JSON with the schema never compiled into a decoding grammar, so nothing
+    forbids {"rationale": ""}."""
     kwargs = TradingAgentsGraph._get_provider_kwargs(_openrouter_graph())
+
+    assert kwargs["extra_body"]["provider"] == {"ignore": ["amazon-bedrock"]}
+
+
+@pytest.mark.unit
+def test_open_weight_filters_are_off_for_a_first_party_model():
+    """Both filters are FATAL for gpt-5.6-luna and must stay empty while it
+    is the configured model (verified live):
+      quantizations ["bf16","fp8"] -> 404 "No endpoints found for the
+        request with quantization" (all 7 endpoints report "unknown")
+      only [deepseek hosts]        -> 404 "No allowed providers are
+        available for the selected model"
+    They are retained as keys, with the measured DeepSeek values preserved
+    in default_config.py's comments, so reverting to an open-weight model
+    is a copy-paste rather than a re-measurement."""
+    from tradingagents.default_config import DEFAULT_CONFIG as CFG
+
+    assert CFG["deep_think_llm"] == "openai/gpt-5.6-luna"
+    assert CFG["quick_think_llm"] == "openai/gpt-5.6-luna"
+    assert CFG["openrouter_quantizations"] == []
+    assert CFG["openrouter_only_providers"] == []
+
+
+@pytest.mark.unit
+def test_reverting_to_an_open_weight_model_restores_both_filters():
+    """The filters are config, not hardcoded to the current model -- a
+    revert repopulates them and they flow straight through."""
+    kwargs = TradingAgentsGraph._get_provider_kwargs(
+        _openrouter_graph(
+            deep_think_llm="deepseek/deepseek-v4-flash-0731",
+            openrouter_quantizations=["bf16", "fp8"],
+            openrouter_only_providers=["deepinfra", "morph"],
+            openrouter_ignore_providers=[],
+        )
+    )
 
     assert kwargs["extra_body"]["provider"] == {
         "quantizations": ["bf16", "fp8"],
-        "only": [
-            "openinference", "akashml", "deepinfra", "morph",
-            "parasail", "mancer2", "nextbit",
-        ],
+        "only": ["deepinfra", "morph"],
     }
 
 
@@ -102,14 +133,16 @@ def test_provider_routing_survives_an_unset_reasoning_effort():
     )
 
     assert "reasoning" not in kwargs["extra_body"]
-    assert kwargs["extra_body"]["provider"]["quantizations"] == ["bf16", "fp8"]
+    assert kwargs["extra_body"]["provider"]["ignore"] == ["amazon-bedrock"]
 
 
 @pytest.mark.unit
-def test_routing_block_is_omitted_entirely_when_both_knobs_are_off():
+def test_routing_block_is_omitted_entirely_when_every_knob_is_off():
     kwargs = TradingAgentsGraph._get_provider_kwargs(
         _openrouter_graph(
-            openrouter_quantizations=[], openrouter_only_providers=[]
+            openrouter_quantizations=[],
+            openrouter_only_providers=[],
+            openrouter_ignore_providers=[],
         )
     )
 
