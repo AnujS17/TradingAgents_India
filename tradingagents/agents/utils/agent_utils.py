@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import logging
+import re
 import time
 from typing import Any, Mapping, Optional
 
@@ -210,6 +211,26 @@ def _clean_identity_value(value: Any) -> Optional[str]:
 # most dual-listed Indian names.
 _INDIA_EXCHANGE_SUFFIXES = (".NS", ".BO")
 
+# What actually makes a symbol "already exchange-qualified", used by
+# resolve_ticker_symbol to decide whether to probe NSE/BSE at all.
+#
+# A DOT before a short alphabetic tail is Yahoo's exchange convention
+# (.NS .BO .TO .L .HK .T .AX .DE .PA .SI ...), so any such tail counts
+# without needing an exhaustive list of the world's venues. A HYPHEN,
+# by contrast, only qualifies when it introduces a quote currency --
+# BTC-USD, ETH-INR -- because hyphens are legal inside NSE symbols
+# (BAJAJ-AUTO, M&M-derived names), which is precisely the collision that
+# left BAJAJ-AUTO unresolved.
+_QUOTE_CURRENCY_SUFFIXES = ("-USD", "-USDT", "-EUR", "-GBP", "-INR", "-BTC", "-ETH")
+_EXCHANGE_SUFFIX_RE = re.compile(r"\.[A-Z]{1,4}$")
+
+
+def _has_exchange_suffix(normalized: str) -> bool:
+    """True when `normalized` already names a venue (or a crypto pair)."""
+    if normalized.endswith(_QUOTE_CURRENCY_SUFFIXES):
+        return True
+    return bool(_EXCHANGE_SUFFIX_RE.search(normalized))
+
 # Retry policy for each yfinance probe (both the .info quote check and the
 # recent-history check below). Neither call is wrapped by stockstats_utils's
 # yf_retry — that one only retries YFRateLimitError specifically, and what
@@ -355,7 +376,25 @@ def resolve_ticker_symbol(ticker: str, asset_type: str = "stock") -> str:
     history endpoint has anything current.
     """
     normalized = ticker.strip().upper()
-    if asset_type == "crypto" or "." in normalized or "-" in normalized:
+    # A hyphen used to short-circuit here alongside a dot, to pass through
+    # crypto pairs like BTC-USD untouched. But hyphens are perfectly legal
+    # INSIDE an NSE symbol -- BAJAJ-AUTO is the textbook case -- so a real
+    # Indian ticker was read as "already exchange-qualified", never had .NS
+    # appended, and yfinance answered "possibly delisted; no timezone found"
+    # for it while BAJAJ-AUTO.NS returns 1241 rows. Observed 2026-08-29: the
+    # verified market snapshot failed with "yfinance returned no data for
+    # 'BAJAJ-AUTO'". Because every deterministic pre-fetch reads the same
+    # resolved value (see this docstring's opening paragraph), that one
+    # substitution degrades news, bulk deals, StockTwits and Reddit for the
+    # whole run, not just the technical snapshot. It also defeated the
+    # never-accept-a-bare-ticker protection below, which is bypassed
+    # entirely when we return before reaching it.
+    #
+    # Only an EXCHANGE suffix means "already qualified", so test for one
+    # rather than for punctuation. -USD and friends keep crypto working; a
+    # trailing .NS/.BO/.TO/.L and so on keeps every already-qualified equity
+    # working; a bare BAJAJ-AUTO now falls through to the NSE/BSE probe.
+    if asset_type == "crypto" or _has_exchange_suffix(normalized):
         return normalized
 
     # A 404 on a probe candidate is the expected answer, not an error: this
