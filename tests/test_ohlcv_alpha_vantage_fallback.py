@@ -95,12 +95,19 @@ def test_load_ohlcv_from_alpha_vantage_returns_none_on_malformed_response():
 @pytest.mark.unit
 def test_load_ohlcv_recovers_via_alpha_vantage_when_yfinance_returns_nothing():
     empty = pd.DataFrame()
+    # load_ohlcv now retries an empty yfinance result (retry_on_empty=True,
+    # see stockstats_utils.yf_retry) before falling through to Alpha
+    # Vantage, since an empty frame is throttling far more often than a
+    # real "no data" answer. time.sleep is patched so the 3 retries this
+    # induces (2s/4s/8s backoff) cost nothing in test time; the backoff
+    # itself is asserted separately in test_yf_retry_on_empty.py.
     with patch("tradingagents.dataflows.stockstats_utils.yf.download", return_value=empty):
-        with patch(
-            "tradingagents.dataflows.alpha_vantage_stock.get_stock",
-            return_value=_AV_CSV,
-        ):
-            result = load_ohlcv("APOLLOHOSP.NS", "2026-08-25")
+        with patch("tradingagents.dataflows.stockstats_utils.time.sleep"):
+            with patch(
+                "tradingagents.dataflows.alpha_vantage_stock.get_stock",
+                return_value=_AV_CSV,
+            ):
+                result = load_ohlcv("APOLLOHOSP.NS", "2026-08-25")
 
     assert not result.empty
     assert "Date" in result.columns
@@ -111,12 +118,13 @@ def test_load_ohlcv_recovers_via_alpha_vantage_when_yfinance_returns_nothing():
 def test_load_ohlcv_still_raises_when_both_vendors_fail():
     empty = pd.DataFrame()
     with patch("tradingagents.dataflows.stockstats_utils.yf.download", return_value=empty):
-        with patch(
-            "tradingagents.dataflows.alpha_vantage_stock.get_stock",
-            side_effect=ConnectionError("alpha vantage unreachable"),
-        ):
-            with pytest.raises(ValueError, match="yfinance returned no data"):
-                load_ohlcv("APOLLOHOSP.NS", "2026-08-25")
+        with patch("tradingagents.dataflows.stockstats_utils.time.sleep"):
+            with patch(
+                "tradingagents.dataflows.alpha_vantage_stock.get_stock",
+                side_effect=ConnectionError("alpha vantage unreachable"),
+            ):
+                with pytest.raises(ValueError, match="yfinance returned no data"):
+                    load_ohlcv("APOLLOHOSP.NS", "2026-08-25")
 
 
 @pytest.mark.unit

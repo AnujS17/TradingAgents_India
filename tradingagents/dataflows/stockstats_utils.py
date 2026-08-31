@@ -14,23 +14,60 @@ from .utils import safe_ticker_component
 logger = logging.getLogger(__name__)
 
 
-def yf_retry(func, max_retries=3, base_delay=2.0):
+def _is_empty_result(value) -> bool:
+    """True for the several shapes yfinance uses to say "nothing"."""
+    if value is None:
+        return True
+    empty = getattr(value, "empty", None)
+    if empty is not None:
+        return bool(empty)
+    if isinstance(value, (list, tuple, dict, str)):
+        return len(value) == 0
+    return False
+
+
+def yf_retry(func, max_retries=3, base_delay=2.0, retry_on_empty=False):
     """Execute a yfinance call with exponential backoff on rate limits.
 
     yfinance raises YFRateLimitError on HTTP 429 responses but does not
     retry them internally. This wrapper adds retry logic specifically
     for rate limits. Other exceptions propagate immediately.
+
+    ``retry_on_empty`` additionally retries a call that SUCCEEDS but hands
+    back nothing. Under sustained load yfinance's informal API usually
+    throttles by returning an empty frame rather than raising 429 (see
+    PERF_HANDOFF.md: "yfinance's informal API throttles hard under sustained
+    request volume"), so the 429-only path above never fired for the failure
+    mode that actually happens. PINELABS.NS and LENSKART.NS both lost their
+    verified market snapshot to this on 2026-08-26/27 -- "yfinance returned
+    no data" -- and both fetch fine on retry, which is what identifies it as
+    throttling rather than a bad symbol.
+
+    OFF by default because empty is a legitimate answer for most callers: a
+    news search with no hits, a statement a company has not filed, a young
+    listing with no history for a window. Retrying those would burn the
+    backoff on a result that will never change. Enabled only where empty
+    genuinely means failure -- price history for a live symbol.
     """
     for attempt in range(max_retries + 1):
         try:
-            return func()
+            result = func()
         except YFRateLimitError:
             if attempt < max_retries:
                 delay = base_delay * (2 ** attempt)
                 logger.warning(f"Yahoo Finance rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
-            else:
-                raise
+                continue
+            raise
+        if retry_on_empty and _is_empty_result(result) and attempt < max_retries:
+            delay = base_delay * (2 ** attempt)
+            logger.warning(
+                "Yahoo Finance returned no data (likely throttling), retrying in "
+                "%.0fs (attempt %d/%d)", delay, attempt + 1, max_retries,
+            )
+            time.sleep(delay)
+            continue
+        return result
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -276,6 +313,11 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     if os.path.exists(data_file) and _cache_covers_date(data_file, curr_date_dt):
         data = pd.read_csv(data_file, on_bad_lines="skip", encoding="utf-8")
     else:
+        # retry_on_empty: price history for a live symbol coming back empty
+        # is throttling far more often than it is a real "no such data"
+        # answer, and the Alpha Vantage fallback below is a much more
+        # expensive way to discover that (free-tier quota, different
+        # coverage). Retry the cheap source before escalating.
         raw = yf_retry(lambda: yf.download(
             symbol,
             start=start_str,
@@ -283,7 +325,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             multi_level_index=False,
             progress=False,
             auto_adjust=True,
-        ))
+        ), retry_on_empty=True)
 
         if raw is None or raw.empty:
             fallback = _load_ohlcv_from_alpha_vantage(symbol, start_str, end_str)
