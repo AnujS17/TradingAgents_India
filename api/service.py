@@ -200,24 +200,44 @@ def _extract_verdict(state: dict) -> Verdict:
     stop it cannot make coherent rather than emitting one offering no
     protection.
 
-    A Hold rating forces Hold-consistent levels, even if the Trader proposed
-    otherwise. The Trader commits to action/entry_price/stop_loss in its OWN
-    call, BEFORE the Portfolio Manager runs — it has no way to know the
-    Portfolio Manager's eventual rating. The Portfolio Manager's rating is
-    documented as "the final position rating" (schemas.PortfolioDecision.
-    rating) and reads the Trader's proposal as one input among several (the
-    full risk debate too), so it can — correctly, given more context — land
-    on Hold after the Trader already proposed a directional trade. Without
-    this reconciliation the card could show "Rating: Hold" next to a real
-    Buy setup with concrete entry/stop numbers: not a cosmetic label
-    mismatch but a conflicting, actionable signal a reader could size a
-    position against, exactly contradicting the product's own stated
-    contract that a Hold has nothing to size (see TheCall.tsx's levels-
-    explanation copy). price_target does NOT need the same treatment: it
-    comes from the Portfolio Manager's own call alongside rating, already
-    instructed to null it when rating is Hold — self-consistent by
-    construction, unlike the Trader's fields. Nulled here regardless, as a
-    cheap belt-and-suspenders in case a model ever violates that instruction.
+    The RATING decides which of entry/stop/exit are shown at all, on top of
+    everything above being resolved first. This is enforced here regardless
+    of what the Trader or Portfolio Manager produced, the same
+    belt-and-suspenders reasoning as the Hold case below: schemas.py's own
+    field descriptions already tell the model the same rule (so a
+    well-behaved model rarely trips this), but the guarantee the user sees
+    has to hold even if a model doesn't follow it.
+
+      Hold                -- none of entry/stop/exit apply. The Trader
+                             commits to action/entry_price/stop_loss in its
+                             OWN call, BEFORE the Portfolio Manager runs —
+                             it has no way to know the Portfolio Manager's
+                             eventual rating, which is documented as "the
+                             final position rating" and can, correctly,
+                             land on Hold after the Trader already proposed
+                             a directional trade. Without this the card
+                             could show "Rating: Hold" next to a real Buy
+                             setup with concrete entry/stop numbers: not a
+                             cosmetic mismatch but a conflicting,
+                             actionable signal a reader could size a
+                             position against, contradicting the product's
+                             own stated contract that a Hold has nothing to
+                             size (TheCall.tsx's levels-explanation copy).
+      Overweight (add)    -- only entry applies. This is a tactical add to
+                             an existing/core position, not a fresh full
+                             trade: there is no new stop to set (the risk
+                             sits on the core holding this is layered onto,
+                             not on the add itself) and no exit/target
+                             (you are growing exposure, not defining where
+                             to close it).
+      Underweight (trim)  -- only exit (price_target) applies. There is
+                             nothing to enter (you already hold the
+                             position) and no fresh stop to set (a position
+                             being reduced is being reduced, not
+                             protected) — the level that remains meaningful
+                             is where you trim INTO.
+      Buy / Sell          -- entry, stop, and exit all apply; a full trade
+                             with nothing rating-specific to null.
     """
     trader = state.get("trader_investment_plan") or ""
     final = state.get("final_trade_decision") or ""
@@ -303,6 +323,17 @@ def _extract_verdict(state: dict) -> Verdict:
         stop_loss = None
         position_sizing = None
         price_target = None
+    elif rating == "Overweight":
+        # A tactical add to an existing/core position, not a fresh full
+        # trade: entry (where to add) is the only level that means
+        # anything here.
+        stop_loss = None
+        price_target = None
+    elif rating == "Underweight":
+        # A trim of an existing position, not a fresh trade: exit (where
+        # to trim into) is the only level that means anything here.
+        entry_price = None
+        stop_loss = None
 
     return Verdict(
         rating=rating,

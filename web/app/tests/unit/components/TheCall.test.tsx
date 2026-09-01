@@ -163,4 +163,64 @@ describe('TheCall', () => {
     // And specifically: 5 of those 9 are the dots themselves.
     expect(dotRow.querySelectorAll(':scope > span.rounded-full')).toHaveLength(5);
   });
+
+  // Which of entry/stop/exit are blank, and why, is now a function of the
+  // RATING (api.service._extract_verdict enforces this backend-side):
+  // Overweight (a tactical add) only keeps entry; Underweight (a trim)
+  // only keeps exit. A single Hold-only sentence used to caption every
+  // blank-field case -- these pin that the copy now matches the rating
+  // that actually produced the blank fields, not just Hold.
+  it('explains Overweight\'s blank stop/exit as a tactical add, not a Hold', () => {
+    const verdict: Verdict = {
+      rating: 'Overweight',
+      price_target: null,
+      time_horizon: '6 months',
+      levels: { action: 'Buy', entry_price: 777, stop_loss: null, position_sizing: null },
+    };
+
+    render(<TheCall verdict={verdict} runId="run-1" />);
+
+    expect(screen.getByText(/tactical add to an existing position/)).toBeInTheDocument();
+    expect(screen.queryByText(/blank for a Hold/)).not.toBeInTheDocument();
+  });
+
+  it('explains Underweight\'s blank entry/stop as a trim, not a Hold', () => {
+    const verdict: Verdict = {
+      rating: 'Underweight',
+      price_target: 843,
+      time_horizon: '4 months',
+      levels: { action: 'Sell', entry_price: null, stop_loss: null, position_sizing: null },
+    };
+
+    render(<TheCall verdict={verdict} runId="run-1" />);
+
+    expect(screen.getByText(/trim of an existing position/)).toBeInTheDocument();
+    expect(screen.queryByText(/blank for a Hold/)).not.toBeInTheDocument();
+  });
+
+  it('still uses the Hold-specific explanation for an actual Hold', () => {
+    const verdict: Verdict = {
+      rating: 'Hold',
+      price_target: null,
+      time_horizon: '3-6 months',
+      levels: { action: 'Hold', entry_price: null, stop_loss: null, position_sizing: null },
+    };
+
+    render(<TheCall verdict={verdict} runId="run-1" />);
+
+    expect(screen.getByText(/blank for a Hold/)).toBeInTheDocument();
+  });
+
+  it('shows no levels explanation at all when Buy/Sell fields are fully populated', () => {
+    const verdict: Verdict = {
+      rating: 'Buy',
+      price_target: 500,
+      time_horizon: '6 months',
+      levels: { action: 'Buy', entry_price: 480, stop_loss: 440, position_sizing: '2%' },
+    };
+
+    render(<TheCall verdict={verdict} runId="run-1" />);
+
+    expect(screen.queryByText(/A blank field is a decision/)).not.toBeInTheDocument();
+  });
 });

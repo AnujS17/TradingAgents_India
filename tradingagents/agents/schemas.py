@@ -295,16 +295,39 @@ class PortfolioDecision(BaseModel):
             + _FINAL_ANSWER_ONLY
         ),
     )
+    # Which of price_target/entry_price/stop_loss apply is a function of
+    # the RATING, not uniform across every non-Hold rating. Overweight and
+    # Underweight are tactical adjustments to an EXISTING position, not a
+    # fresh full trade, so only the field describing that specific
+    # adjustment is meaningful:
+    #   Buy / Sell        -- a full trade: entry, stop, AND exit all apply.
+    #   Overweight (add)  -- only entry applies (where to add). No fresh
+    #                        stop (the risk sits on the core holding this
+    #                        is layered onto, not on the add itself), no
+    #                        exit (you are growing exposure, not closing
+    #                        it).
+    #   Underweight (trim)-- only the exit applies (the level to trim
+    #                        into). No entry (you already hold it), no
+    #                        fresh stop (the position is being reduced,
+    #                        not protected).
+    #   Hold               -- none apply.
+    # api.service._extract_verdict enforces this regardless of what the
+    # model produces (belt-and-suspenders, same pattern as its Hold
+    # reconciliation), but stating it here means the model is not spending
+    # reasoning on a field that will be discarded, and is not implying a
+    # decision (a stop on a tactical add) that was never actually made.
     price_target: Optional[float] = Field(
         default=None,
         description=(
             "The exit / take-profit level in the instrument's quote "
             "currency — the price at which this position would be closed "
-            "for a win. REQUIRED whenever rating is not Hold: give one "
-            "specific level grounded in the analysts' reports (a technical "
-            "level, a valuation-based target, a prior high). Omit it (null) "
-            "ONLY when rating is Hold, where there is no position being "
-            "opened or added to."
+            "for a win. REQUIRED for Buy, Underweight (the level to trim "
+            "INTO), and Sell: give one specific level grounded in the "
+            "analysts' reports (a technical level, a valuation-based "
+            "target, a prior high). Omit it (null) for Hold (nothing is "
+            "being opened or added to) and for Overweight (you are "
+            "growing the position, not closing it — there is no exit "
+            "level to state yet)."
         ),
     )
     # These two exist because the Portfolio Manager ROUTINELY works out the
@@ -330,9 +353,10 @@ class PortfolioDecision(BaseModel):
             "names a level to act at, put that number here. Ground it in "
             "the verified market data the analysts cited (a support or "
             "resistance level, a moving average, a recent high or low) and "
-            "keep it in the same ballpark as the last traded price. Omit "
-            "(null) when rating is Hold, or when you are content with the "
-            "Trader's level and have nothing to correct."
+            "keep it in the same ballpark as the last traded price. "
+            "REQUIRED for Buy, Overweight (the level to ADD at) and Sell. "
+            "Omit (null) for Hold and for Underweight — you already hold "
+            "the position being trimmed, so there is nothing to enter."
         ),
     )
     stop_loss: Optional[float] = Field(
@@ -344,9 +368,11 @@ class PortfolioDecision(BaseModel):
             "you supply both — including on a Sell, where it guards the "
             "portion of the position being retained rather than trimmed. "
             "Ground it in a real level (below a support zone, a moving "
-            "average, an ATR multiple). Omit (null) when rating is Hold, "
-            "when the whole position is being exited, or when you are "
-            "content with the Trader's stop."
+            "average, an ATR multiple). REQUIRED for Buy and Sell. Omit "
+            "(null) for Hold, for Overweight (an incremental add is not a "
+            "fresh risk position with its own stop — the risk sits on the "
+            "core holding), and for Underweight (a position being reduced "
+            "is not being protected, it is being reduced)."
         ),
     )
 

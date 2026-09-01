@@ -91,6 +91,22 @@ export function TheCall({
   // absence (a vendor outage) isn't the same kind of blank and gets no
   // explanatory copy here.
   const showLevelsExplanation = entryIsNull || stopIsNull || exitIsNull;
+  // Which fields are blank, and why, is now a function of the RATING
+  // (api.service._extract_verdict enforces this backend-side) --
+  // Overweight/Underweight are tactical adjustments to an EXISTING
+  // position, not a fresh full trade, so only one of the three levels
+  // means anything for each. A single Hold-only sentence used to cover
+  // every blank-field case; it now has to match which rating produced it,
+  // or a reader sees "nothing to size" next to a card that clearly has an
+  // entry and a rating other than Hold.
+  const levelsExplanation =
+    rating === 'Overweight'
+      ? 'Stop and exit are blank for an Overweight — this is a tactical add to an existing position, not a fresh trade, so there is no new stop to protect and no exit level being set yet. A blank field is a decision, not a gap.'
+      : rating === 'Underweight'
+        ? 'Entry and stop are blank for an Underweight — this is a trim of an existing position, not a fresh trade, so there is nothing to enter and no new stop to protect. Exit is the level that matters here. A blank field is a decision, not a gap.'
+        : rating === 'Hold'
+          ? 'Entry, stop and exit are blank for a Hold — there is no position being opened or added to, so there is nothing to size. A blank field is a decision, not a gap.'
+          : 'Some levels are blank — see the full record below for why.';
 
   return (
     // aria-label is "Verdict summary", not the visible "The call" heading:
@@ -312,10 +328,7 @@ export function TheCall({
       </dl>
 
       {showLevelsExplanation && (
-        <p className="copy text-[#6F6F6F] mt-4 measure">
-          Entry, stop and exit are blank for a Hold — there is no position being opened or added to, so there is
-          nothing to size. A blank field is a decision, not a gap.
-        </p>
+        <p className="copy text-[#6F6F6F] mt-4 measure">{levelsExplanation}</p>
       )}
     </section>
   );

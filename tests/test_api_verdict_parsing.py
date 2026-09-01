@@ -201,9 +201,13 @@ def test_hold_rating_overrides_a_directional_trader_proposal():
 
 @pytest.mark.unit
 def test_non_hold_rating_leaves_the_traders_directional_proposal_alone():
-    """The reconciliation is scoped to Hold only -- a Buy/Sell/Overweight/
-    Underweight rating must not silently strip a real, still-relevant trade
-    setup just because this code path now exists."""
+    """Buy and Sell are full trades with nothing rating-specific to null --
+    a Buy/Sell rating must not silently strip a real, still-relevant trade
+    setup just because the Hold/Overweight/Underweight reconciliation code
+    path now exists. (Overweight and Underweight DO selectively null
+    fields — see test_overweight_only_keeps_entry and
+    test_underweight_only_keeps_exit below; this test is scoped to the
+    rating that must NOT be touched.)"""
     proposal = TraderProposal(
         action=TraderAction.BUY,
         reasoning="Momentum confirmed.",
@@ -211,15 +215,15 @@ def test_non_hold_rating_leaves_the_traders_directional_proposal_alone():
         stop_loss=170.0,
     )
     decision = PortfolioDecision(
-        rating=PortfolioRating.OVERWEIGHT,
-        executive_summary="Add on strength.",
+        rating=PortfolioRating.BUY,
+        executive_summary="Strong conviction entry.",
         investment_thesis="Aligned with the trader's setup.",
         price_target=220.0,
     )
 
     verdict = _extract_verdict(_state(proposal=proposal, decision=decision))
 
-    assert verdict.rating == "Overweight"
+    assert verdict.rating == "Buy"
     assert verdict.levels.action == "Buy"
     assert verdict.levels.entry_price == 195.9
     assert verdict.levels.stop_loss == 170.0
@@ -278,13 +282,19 @@ def test_the_portfolio_managers_own_levels_win_over_the_traders():
     SKYGOLD.NS 2026-08-31: the PM said "trim toward the 843-850 resistance
     zone ... hard-stop near 770-774" against an 811.40 close while the card
     rendered the Trader's entry 5000 / stop 4200 -- because the PM had
-    nowhere structured to put what it had already worked out."""
+    nowhere structured to put what it had already worked out.
+
+    Rated Sell rather than the real incident's Underweight so this test
+    isolates PM-overrides-Trader precedence from the separate
+    Overweight/Underweight field-nulling rule (which would null stop_loss
+    here regardless of which source proposed it) -- see
+    test_underweight_only_keeps_exit for that behaviour on its own."""
     proposal = TraderProposal(
         action=TraderAction.SELL, reasoning="Trim.", entry_price=5000.0, stop_loss=4200.0
     )
     decision = PortfolioDecision(
-        rating=PortfolioRating.UNDERWEIGHT,
-        executive_summary="Trim toward resistance.",
+        rating=PortfolioRating.SELL,
+        executive_summary="Exit into resistance.",
         investment_thesis="Cash conversion is structurally weak.",
         price_target=850.0,
         entry_price=846.0,
@@ -301,13 +311,18 @@ def test_the_portfolio_managers_own_levels_win_over_the_traders():
 @pytest.mark.unit
 def test_the_traders_levels_are_still_used_when_the_pm_adds_nothing():
     """The PM's fields are optional and additive -- a PM with nothing to
-    correct must leave the previous behaviour exactly intact."""
+    correct must leave the previous behaviour exactly intact.
+
+    Rated Buy rather than Overweight so this isolates PM-adds-nothing
+    pass-through from the separate Overweight/Underweight field-nulling
+    rule, which would null stop_loss here regardless of source -- see
+    test_overweight_only_keeps_entry for that behaviour on its own."""
     proposal = TraderProposal(
         action=TraderAction.BUY, reasoning="Momentum.", entry_price=3970.0, stop_loss=3800.0
     )
     decision = PortfolioDecision(
-        rating=PortfolioRating.OVERWEIGHT,
-        executive_summary="Add on strength.",
+        rating=PortfolioRating.BUY,
+        executive_summary="Strong conviction entry.",
         investment_thesis="Order book supports it.",
         price_target=4300.0,
     )
@@ -532,3 +547,111 @@ def test_only_the_stop_is_dropped_never_the_entry():
 
     assert verdict.levels.entry_price == 774.0
     assert verdict.levels.stop_loss is None
+
+
+# ---------------------------------------------------------------------------
+# Rating-scoped field applicability: Overweight (add) / Underweight (trim)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_overweight_only_keeps_entry():
+    """Overweight is a tactical ADD to an existing/core position, not a
+    fresh full trade: entry (where to add) is the only level that means
+    anything. stop_loss and price_target must be nulled even when both
+    were proposed, because there is no new position to protect and no
+    exit being defined -- you are growing exposure, not closing it."""
+    proposal = TraderProposal(
+        action=TraderAction.BUY, reasoning="x", entry_price=777.0, stop_loss=740.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.OVERWEIGHT,
+        executive_summary="Add gradually.",
+        investment_thesis="Structural growth intact.",
+        price_target=884.0,
+    )
+    state, patched = _priced_state(proposal, decision, 811.40)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.rating == "Overweight"
+    assert verdict.levels.entry_price == 777.0
+    assert verdict.levels.stop_loss is None
+    assert verdict.price_target is None
+
+
+@pytest.mark.unit
+def test_underweight_only_keeps_exit():
+    """Underweight is a TRIM of an existing position, not a fresh trade:
+    exit (where to trim into) is the only level that means anything.
+    entry_price and stop_loss must be nulled -- there is nothing to enter
+    (you already hold it) and the position being reduced is being reduced,
+    not protected."""
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="x", entry_price=850.0, stop_loss=780.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.UNDERWEIGHT,
+        executive_summary="Trim into strength.",
+        investment_thesis="Valuation has run ahead of fundamentals.",
+        price_target=843.0,
+    )
+    state, patched = _priced_state(proposal, decision, 811.40)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.rating == "Underweight"
+    assert verdict.levels.entry_price is None
+    assert verdict.levels.stop_loss is None
+    assert verdict.price_target == 843.0
+
+
+@pytest.mark.unit
+def test_overweight_nulls_the_pms_own_stop_and_target_too():
+    """The rating-scoped nulling must apply after the PM's own
+    entry_price/stop_loss override, not just to whatever the Trader
+    proposed -- a PM that (incorrectly) supplies its own stop/target on an
+    Overweight must still have them nulled on the card."""
+    decision = PortfolioDecision(
+        rating=PortfolioRating.OVERWEIGHT,
+        executive_summary="Add gradually.",
+        investment_thesis="Structural growth intact.",
+        price_target=884.0,
+        entry_price=777.0,
+        stop_loss=740.0,
+    )
+    state, patched = _priced_state(None, decision, 811.40)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 777.0
+    assert verdict.levels.stop_loss is None
+    assert verdict.price_target is None
+
+
+@pytest.mark.unit
+def test_buy_and_sell_keep_every_level_unlike_overweight_and_underweight():
+    """Parametrised-in-spirit confirmation that the new nulling is scoped
+    to exactly Overweight/Underweight/Hold, not "every rating that isn't
+    Buy" -- Sell is just as much a full trade as Buy and must keep all
+    three fields."""
+    # Long-only book: stop must be strictly BELOW entry even on a Sell (it
+    # protects the portion of the position being retained, not trimmed) --
+    # sell into strength above spot, stop below that entry.
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="x", entry_price=1360.0, stop_loss=1330.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.SELL,
+        executive_summary="Exit the position.",
+        investment_thesis="Thesis has broken down.",
+        price_target=1200.0,
+    )
+    state, patched = _priced_state(proposal, decision, 1323.25)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.rating == "Sell"
+    assert verdict.levels.entry_price == 1360.0
+    assert verdict.levels.stop_loss == 1330.0
+    assert verdict.price_target == 1200.0
