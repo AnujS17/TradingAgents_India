@@ -555,12 +555,15 @@ def test_only_the_stop_is_dropped_never_the_entry():
 
 
 @pytest.mark.unit
-def test_overweight_only_keeps_entry():
+def test_overweight_keeps_entry_and_target_but_drops_the_stop():
     """Overweight is a tactical ADD to an existing/core position, not a
-    fresh full trade: entry (where to add) is the only level that means
-    anything. stop_loss and price_target must be nulled even when both
-    were proposed, because there is no new position to protect and no
-    exit being defined -- you are growing exposure, not closing it."""
+    fresh full trade. Only the STOP is dropped: the risk sits on the core
+    holding this is layered onto, not on the increment.
+
+    Entry (where to add) and the directional target (where the thesis
+    says price goes) are BOTH kept, and they are different numbers --
+    nulling the target here used to leave an Overweight with no view at
+    all on where the stock was headed."""
     proposal = TraderProposal(
         action=TraderAction.BUY, reasoning="x", entry_price=777.0, stop_loss=740.0
     )
@@ -577,7 +580,8 @@ def test_overweight_only_keeps_entry():
     assert verdict.rating == "Overweight"
     assert verdict.levels.entry_price == 777.0
     assert verdict.levels.stop_loss is None
-    assert verdict.price_target is None
+    # The PM's own directional target survives -- only the stop is dropped.
+    assert verdict.price_target == 884.0
 
 
 @pytest.mark.unit
@@ -601,17 +605,20 @@ def test_underweight_only_keeps_exit():
         verdict = _extract_verdict(state)
 
     assert verdict.rating == "Underweight"
-    assert verdict.levels.entry_price is None
+    # The execution level survives: a trim still has a price you sell at.
+    assert verdict.levels.entry_price == 850.0
     assert verdict.levels.stop_loss is None
+    # ...and the target stays a DIRECTIONAL view, not that execution level.
     assert verdict.price_target == 843.0
 
 
 @pytest.mark.unit
-def test_overweight_nulls_the_pms_own_stop_and_target_too():
+def test_overweight_nulls_the_pms_own_stop_but_keeps_its_target():
     """The rating-scoped nulling must apply after the PM's own
     entry_price/stop_loss override, not just to whatever the Trader
-    proposed -- a PM that (incorrectly) supplies its own stop/target on an
-    Overweight must still have them nulled on the card."""
+    proposed. For an Overweight only the STOP goes: the risk sits on the
+    core holding being added to. The directional target is kept -- an add
+    still has a view on where price is going."""
     decision = PortfolioDecision(
         rating=PortfolioRating.OVERWEIGHT,
         executive_summary="Add gradually.",
@@ -626,7 +633,8 @@ def test_overweight_nulls_the_pms_own_stop_and_target_too():
 
     assert verdict.levels.entry_price == 777.0
     assert verdict.levels.stop_loss is None
-    assert verdict.price_target is None
+    # The PM's own directional target survives -- only the stop is dropped.
+    assert verdict.price_target == 884.0
 
 
 @pytest.mark.unit
@@ -655,3 +663,58 @@ def test_buy_and_sell_keep_every_level_unlike_overweight_and_underweight():
     assert verdict.levels.entry_price == 1360.0
     assert verdict.levels.stop_loss == 1330.0
     assert verdict.price_target == 1200.0
+
+
+@pytest.mark.unit
+def test_underweight_keeps_the_trim_level_and_the_target_apart():
+    """The two numbers answer different questions and must not collapse
+    into one another.
+
+    Real failure this encodes: an Underweight over a "1-2 quarters"
+    horizon rendered EXIT = 266.67 against a 263.00 close. That 1% figure
+    was the 10-EMA trim level wearing the target's label, because
+    price_target had been redefined as "the level to trim INTO". A reader
+    got no directional view at all, while the baseline engine produced a
+    genuine 300 (the 200-SMA) on identical data.
+
+    entry_price = where you sell. price_target = where you think it goes.
+    """
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="Trim into the supply shelf.",
+        entry_price=266.67, stop_loss=250.0,
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.UNDERWEIGHT,
+        executive_summary="Trim into 266-268; thesis targets 240.",
+        investment_thesis="Confirmed downtrend, decelerating earnings.",
+        price_target=240.0,
+    )
+    state, patched = _priced_state(proposal, decision, 263.00)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.levels.entry_price == 266.67, "trim level must survive"
+    assert verdict.price_target == 240.0, "directional target must survive"
+    assert verdict.levels.stop_loss is None
+    # The bug was these two becoming the same number.
+    assert verdict.price_target != verdict.levels.entry_price
+
+
+@pytest.mark.unit
+def test_an_explicit_pm_target_still_wins_over_the_execution_level():
+    """The promotion above is a fallback, not an override -- a PM that does
+    state its exit must keep it."""
+    proposal = TraderProposal(
+        action=TraderAction.SELL, reasoning="x", entry_price=270.0, stop_loss=250.0
+    )
+    decision = PortfolioDecision(
+        rating=PortfolioRating.UNDERWEIGHT,
+        executive_summary="Trim.",
+        investment_thesis="y",
+        price_target=281.0,
+    )
+    state, patched = _priced_state(proposal, decision, 266.30)
+    with patched:
+        verdict = _extract_verdict(state)
+
+    assert verdict.price_target == 281.0

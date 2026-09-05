@@ -101,9 +101,9 @@ export function TheCall({
   // entry and a rating other than Hold.
   const levelsExplanation =
     rating === 'Overweight'
-      ? 'Stop and exit are blank for an Overweight — this is a tactical add to an existing position, not a fresh trade, so there is no new stop to protect and no exit level being set yet. A blank field is a decision, not a gap.'
+      ? 'Stop is blank for an Overweight — this is a tactical add to an existing position, not a fresh trade, so there is no new stop to protect; the risk sits on the core holding. Entry is where to add; exit is where the thesis expects price to go. A blank field is a decision, not a gap.'
       : rating === 'Underweight'
-        ? 'Entry and stop are blank for an Underweight — this is a trim of an existing position, not a fresh trade, so there is nothing to enter and no new stop to protect. Exit is the level that matters here. A blank field is a decision, not a gap.'
+        ? 'Stop is blank for an Underweight — a position being reduced is not being protected, it is being reduced. Entry is the level to trim into; exit is where the thesis expects price to go. A blank field is a decision, not a gap.'
         : rating === 'Hold'
           ? 'Entry, stop and exit are blank for a Hold — there is no position being opened or added to, so there is nothing to size. A blank field is a decision, not a gap.'
           : 'Some levels are blank — see the full record below for why.';
@@ -310,7 +310,11 @@ export function TheCall({
           </dd>
         </div>
         <div className="bg-white p-4">
-          <dt className="font-tight text-[11px] font-bold tracking-wide text-[#676D80]">ENTRY</dt>
+          {/* For a trim the execution level is a SELL, so "Entry" reads
+              backwards. Same field, direction-correct label. */}
+          <dt className="font-tight text-[11px] font-bold tracking-wide text-[#676D80]">
+            {rating === 'Underweight' || rating === 'Sell' ? 'TRIM AT' : 'ENTRY'}
+          </dt>
           <dd className="font-tight font-semibold text-[#676D80] text-lg mt-1">{formatPrice(levels.entry_price)}</dd>
         </div>
         <div className="bg-white p-4">

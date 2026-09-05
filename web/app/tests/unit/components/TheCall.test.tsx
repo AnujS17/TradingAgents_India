@@ -184,17 +184,24 @@ describe('TheCall', () => {
     expect(screen.queryByText(/blank for a Hold/)).not.toBeInTheDocument();
   });
 
-  it('explains Underweight\'s blank entry/stop as a trim, not a Hold', () => {
+  it('labels the Underweight execution level as a trim, and keeps the target separate', () => {
+    // The two numbers answer different questions: 266.67 is where you
+    // SELL, 240 is where the thesis says price GOES. They previously
+    // collapsed into one another, rendering EXIT = 266.67 against a
+    // 263.00 close -- a 1% "target" over a multi-month horizon.
     const verdict: Verdict = {
       rating: 'Underweight',
-      price_target: 843,
+      price_target: 240,
       time_horizon: '4 months',
-      levels: { action: 'Sell', entry_price: null, stop_loss: null, position_sizing: null },
+      levels: { action: 'Sell', entry_price: 266.67, stop_loss: null, position_sizing: null },
     };
 
     render(<TheCall verdict={verdict} runId="run-1" />);
 
-    expect(screen.getByText(/trim of an existing position/)).toBeInTheDocument();
+    // "Entry" reads backwards for a sell.
+    expect(screen.getByText('TRIM AT')).toBeInTheDocument();
+    expect(screen.queryByText('ENTRY')).not.toBeInTheDocument();
+    expect(screen.getByText(/level to trim into/)).toBeInTheDocument();
     expect(screen.queryByText(/blank for a Hold/)).not.toBeInTheDocument();
   });
 

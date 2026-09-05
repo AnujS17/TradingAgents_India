@@ -319,15 +319,20 @@ class PortfolioDecision(BaseModel):
     price_target: Optional[float] = Field(
         default=None,
         description=(
-            "The exit / take-profit level in the instrument's quote "
-            "currency — the price at which this position would be closed "
-            "for a win. REQUIRED for Buy, Underweight (the level to trim "
-            "INTO), and Sell: give one specific level grounded in the "
-            "analysts' reports (a technical level, a valuation-based "
-            "target, a prior high). Omit it (null) for Hold (nothing is "
-            "being opened or added to) and for Overweight (you are "
-            "growing the position, not closing it — there is no exit "
-            "level to state yet)."
+            "Where you expect the price to GO over the time horizon you "
+            "state — a directional view, not a level you transact at. "
+            "Ground it in the analysts' work: a valuation multiple, a "
+            "major moving average the thesis expects to be reclaimed or "
+            "lost, a prior swing high or low. REQUIRED for Buy, "
+            "Overweight, Underweight and Sell; omit (null) only for Hold. "
+            "\n\n"
+            "This must NOT be an execution level. If your plan is to add "
+            "or trim into a nearby zone, that number belongs in "
+            "entry_price — putting it here produces a 'target' one "
+            "percent from spot over a multi-month horizon, which tells a "
+            "reader nothing about where you think the stock is going. A "
+            "target that sits within roughly a percent of the last traded "
+            "price is almost always this mistake."
         ),
     )
     # These two exist because the Portfolio Manager ROUTINELY works out the
@@ -354,9 +359,15 @@ class PortfolioDecision(BaseModel):
             "the verified market data the analysts cited (a support or "
             "resistance level, a moving average, a recent high or low) and "
             "keep it in the same ballpark as the last traded price. "
-            "REQUIRED for Buy, Overweight (the level to ADD at) and Sell. "
-            "Omit (null) for Hold and for Underweight — you already hold "
-            "the position being trimmed, so there is nothing to enter."
+            "\n\n"
+            "This is the EXECUTION level in whichever direction the "
+            "rating implies, so it is required for every rating that "
+            "transacts: Buy and Overweight (the level to BUY or ADD at), "
+            "Sell and Underweight (the level to SELL or TRIM INTO — a "
+            "trim still has a price you execute at, usually just above "
+            "spot in a supply zone). Omit (null) only for Hold, where "
+            "nothing is transacted. Do not put a directional target here; "
+            "that belongs in price_target."
         ),
     )
     stop_loss: Optional[float] = Field(

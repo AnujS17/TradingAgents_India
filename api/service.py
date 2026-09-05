@@ -323,16 +323,26 @@ def _extract_verdict(state: dict) -> Verdict:
         stop_loss = None
         position_sizing = None
         price_target = None
-    elif rating == "Overweight":
-        # A tactical add to an existing/core position, not a fresh full
-        # trade: entry (where to add) is the only level that means
-        # anything here.
-        stop_loss = None
-        price_target = None
-    elif rating == "Underweight":
-        # A trim of an existing position, not a fresh trade: exit (where
-        # to trim into) is the only level that means anything here.
-        entry_price = None
+    elif rating in ("Overweight", "Underweight"):
+        # A tactical adjustment to an existing position, not a fresh full
+        # trade. Two levels are meaningful and they are DIFFERENT things:
+        #   entry_price  -- where you transact (add for Overweight, trim
+        #                   for Underweight). Usually close to spot.
+        #   price_target -- where the thesis says price GOES over the
+        #                   stated horizon. Usually far from spot.
+        # Only the stop is dropped: the risk sits on the core holding this
+        # is layered onto (Overweight), or the position is being reduced
+        # rather than protected (Underweight).
+        #
+        # price_target used to be nulled for Overweight and REDEFINED for
+        # Underweight as "the level to trim into". Both were wrong, and
+        # the Underweight case was the visible failure: an Underweight
+        # over a "1-2 quarters" horizon rendered EXIT = 266.67 against a
+        # 263.00 close -- a 1% "target" that tells a reader nothing, and
+        # which was really the 10-EMA trim level wearing the target's
+        # label. The baseline engine, with no rating-scoping at all,
+        # produced a genuine 300 (the 200-SMA, ~14% away) on the same
+        # data and was straightforwardly more useful.
         stop_loss = None
 
     return Verdict(
