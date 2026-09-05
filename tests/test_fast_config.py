@@ -1,11 +1,18 @@
 """get_fast_config() — the opt-in fast/platform profile.
 
-A single run through the default pipeline is 10+ minutes, unacceptable for
-an interactive platform. get_fast_config() trims the two biggest levers
-(debate depth, which is 10 sequential LLM calls by graph structure — no
-parallelism is possible there — and report verbosity) plus narrower Reddit
-scope and dropping GDELT, while leaving DEFAULT_CONFIG itself completely
-untouched so existing behaviour is unaffected unless a caller opts in.
+A single run through the default pipeline used to be 10+ minutes,
+unacceptable for an interactive platform. What the profile is allowed to
+trim has narrowed twice, both times because the lever turned out to cost
+accuracy rather than just words:
+
+  * 2026-08-12 — article caps, narrowed Reddit scope and a gdelt-stripped
+    vendor chain were reverted: input size is not what costs wall-clock.
+  * 2026-09-03 — the debate/risk round halving was reverted: 1 round does
+    not shorten the debate, it removes the Bull's turn after the Bear.
+
+What is left is genuinely free: run the four independent analysts
+concurrently, and ask for a "balanced" (not "concise") write-up.
+DEFAULT_CONFIG itself is never mutated.
 """
 
 import pytest
@@ -15,25 +22,64 @@ from tradingagents.graph.conditional_logic import ConditionalLogic
 
 
 @pytest.mark.unit
-def test_fast_config_halves_debate_and_risk_rounds():
+def test_fast_config_keeps_the_full_two_round_debate():
+    """Restored to 2 on 2026-09-03, matching DEFAULT_CONFIG.
+
+    At 1 round the exchange is Bull -> Bear and stops, so the Bull never
+    answers the Bear and an unsupported Bull claim reaches the Research
+    Manager unchallenged. ITC.NS 2026-09-02: the Bull asserted "multi-year
+    support at 253-255" -- traceable to a StockTwits post, and false (the
+    stock had not traded there since 2022) -- and that claim carried a
+    Buy-the-dip Overweight. The same ticker at 2 rounds gave the Bull a
+    second turn in which it had to engage the Bear directly, conceded the
+    honest version ("the lowest print in the 13-month dataset"), and the
+    run landed on Underweight with reachable levels.
+
+    Debate depth is no longer the wall-clock lever it was: the analyst
+    phase runs concurrently and the provider switch cut per-call latency
+    roughly 9x. See QUALITY_BASELINE_ITC.md."""
     fast = get_fast_config()
 
-    assert fast["max_debate_rounds"] == 1
-    assert fast["max_risk_discuss_rounds"] == 1
-    assert DEFAULT_CONFIG["max_debate_rounds"] == 2
-    assert DEFAULT_CONFIG["max_risk_discuss_rounds"] == 2
+    assert fast["max_debate_rounds"] == 2
+    assert fast["max_risk_discuss_rounds"] == 2
+    assert fast["max_debate_rounds"] == DEFAULT_CONFIG["max_debate_rounds"]
+    assert fast["max_risk_discuss_rounds"] == DEFAULT_CONFIG["max_risk_discuss_rounds"]
 
 
 @pytest.mark.unit
-def test_single_round_bull_bear_debate_is_a_full_exchange_not_a_dropped_side():
-    # 1 round must still mean Bull argues AND Bear rebuts — not one side
-    # skipped entirely, which would silently degrade the debate rather than
-    # just shortening it.
+def test_two_rounds_give_the_bull_a_turn_after_the_bear():
+    """The property the round restoration was actually bought for: the Bull
+    must get to answer the Bear, which is where unsupported claims get
+    withdrawn."""
     fast = get_fast_config()
     cl = ConditionalLogic(
         max_debate_rounds=fast["max_debate_rounds"],
         max_risk_discuss_rounds=fast["max_risk_discuss_rounds"],
     )
+    state = {"investment_debate_state": {"count": 0, "current_response": ""}}
+
+    speakers = []
+    for _ in range(8):
+        nxt = cl.should_continue_debate(state)
+        if nxt == "Research Manager":
+            break
+        speakers.append(nxt)
+        state["investment_debate_state"]["count"] += 1
+        state["investment_debate_state"]["current_response"] = nxt.split()[0]
+
+    assert speakers == [
+        "Bull Researcher", "Bear Researcher",
+        "Bull Researcher", "Bear Researcher",
+    ]
+
+
+@pytest.mark.unit
+def test_a_single_round_debate_is_still_a_full_exchange_not_a_dropped_side():
+    """Independent of the profile: whenever someone DOES set 1 round (the
+    TRADINGAGENTS_MAX_DEBATE_ROUNDS escape hatch), it must still mean Bull
+    argues AND Bear rebuts -- not one side skipped entirely, which would
+    degrade the debate rather than merely shorten it."""
+    cl = ConditionalLogic(max_debate_rounds=1, max_risk_discuss_rounds=1)
     state = {"investment_debate_state": {"count": 0, "current_response": ""}}
 
     speakers = []
@@ -49,12 +95,9 @@ def test_single_round_bull_bear_debate_is_a_full_exchange_not_a_dropped_side():
 
 
 @pytest.mark.unit
-def test_single_round_risk_debate_still_gives_all_three_analysts_a_turn():
-    fast = get_fast_config()
-    cl = ConditionalLogic(
-        max_debate_rounds=fast["max_debate_rounds"],
-        max_risk_discuss_rounds=fast["max_risk_discuss_rounds"],
-    )
+def test_a_single_round_risk_debate_still_gives_all_three_analysts_a_turn():
+    """Same escape-hatch guarantee as above, for the 3-way risk debate."""
+    cl = ConditionalLogic(max_debate_rounds=1, max_risk_discuss_rounds=1)
     state = {"risk_debate_state": {"count": 0, "latest_speaker": ""}}
 
     speakers = []
@@ -95,9 +138,20 @@ def test_fast_config_does_not_reduce_any_fetched_data():
     ):
         assert fast[key] == DEFAULT_CONFIG[key], f"fast mode must not change {key}"
 
-    # gdelt specifically: it is fallback-only, so dropping it is invisible
-    # until a primary vendor fails and fast mode silently has no fallback.
-    assert "gdelt" in fast["data_vendors"]["news_data"]
+    # This test's point is that FAST must not narrow the vendor chain
+    # relative to DEFAULT -- not that any particular vendor is in it. The
+    # equality assertion above already carries that.
+    #
+    # It used to additionally pin gdelt into the chain, because dropping a
+    # fallback is invisible until a primary fails. gdelt was removed from
+    # DEFAULT_CONFIG on 2026-09-05 for constant HTTP 429s (see the vendor
+    # comment there for the measurements), so pinning it here would now
+    # assert the opposite of the intended configuration. The property that
+    # actually matters survives as: fast uses whatever DEFAULT uses.
+    assert fast["data_vendors"]["news_data"] == DEFAULT_CONFIG["data_vendors"]["news_data"]
+    # google_news is the primary company-news search and the one vendor the
+    # chain cannot degrade gracefully without.
+    assert "google_news" in fast["data_vendors"]["news_data"]
 
 
 @pytest.mark.unit
@@ -108,11 +162,14 @@ def test_fast_config_only_changes_output_and_scheduling_keys():
 
     # report_style and max_output_tokens were removed on 2026-08-12: for an
     # LLM, output length IS reasoning depth, so shortening the write-up made
-    # fast runs reason less rather than merely write less. Scheduling is the
-    # only lever left.
+    # fast runs reason less rather than merely write less.
+    #
+    # max_debate_rounds / max_risk_discuss_rounds left this set on
+    # 2026-09-03 for the same reason, one level up: halving the rounds does
+    # not shorten the debate, it removes the Bull's chance to answer the
+    # Bear. Concurrency -- genuinely free, since the four analysts are
+    # independent -- is the only real scheduling lever left.
     assert changed == {
-        "max_debate_rounds",
-        "max_risk_discuss_rounds",
         "analyst_concurrency_limit",
         "report_style",
     }

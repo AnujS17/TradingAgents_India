@@ -20,6 +20,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
+    "TRADINGAGENTS_OHLCV_CACHE_FRESHNESS_CHECK": "ohlcv_cache_freshness_check",
+    "TRADINGAGENTS_OHLCV_CACHE_RECHECK_SECONDS": "ohlcv_cache_recheck_seconds",
+    "TRADINGAGENTS_BALANCED_WORD_SCALE": "balanced_word_scale",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_LLM_TEMPERATURE":      "llm_temperature",
     "TRADINGAGENTS_LLM_SEED":             "llm_seed",
@@ -88,6 +91,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "deep_think_llm": "openai/gpt-5.6-luna",
     "quick_think_llm": "openai/gpt-5.6-luna",
     "backend_url": None,
+
 
     # Provider-specific thinking configuration
     "google_thinking_level": None,
@@ -260,6 +264,46 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # fresh data; a different analysis date is a different key either way, so
     # daily runs are unaffected.
     "snapshot_cache_enabled": True,
+
+    # --- OHLCV cache freshness (dataflows/stockstats_utils.py) -------------
+    # load_ohlcv keys its price cache on (symbol, today) and would otherwise
+    # reuse it for the WHOLE day, pinning every later run to whatever the
+    # vendor had published at the first fetch of that day.
+    #
+    # Two real incidents, both silent:
+    #   * KAYNES.NS 2026-08-31 -- a 16:38 IST run (an hour after the 15:30
+    #     close) wrote a cache whose last row was 08-28, because yfinance had
+    #     not yet published the 08-31 bar. Every later run that day reused it,
+    #     so a 19:51 IST run analysed three-day-old prices and never saw a
+    #     -6.5% session (3943 -> 3685). The file was byte-identical to the
+    #     previous day's, which is how it went unnoticed.
+    #   * ITC.NS 2026-09-02 -- a 16:11 IST run analysed the 08-31 close of
+    #     255.50 while the stock had closed at 266.60 on 09-01 and 266.30 on
+    #     09-02. The recommended entry was never fillable at any point after
+    #     the analysis was produced.
+    #
+    # When True, a cache that does not reach the requested date is re-checked
+    # against the vendor once the recheck window below has elapsed, and a
+    # cache whose newest row carries no usable Close is refetched outright
+    # (see _cache_covers_date). Set False to restore the original
+    # "reuse the file for the whole day, unconditionally" behaviour -- which
+    # is what the two incidents above ran on.
+    "ohlcv_cache_freshness_check": True,
+    # How long a cache that does NOT reach the requested date is trusted
+    # before the vendor is asked again. Bounds the retry rate so a genuine
+    # holiday, a suspended scrip or a delisting cannot turn every call into a
+    # fresh download, while still letting a run started shortly after the
+    # close pick that session up once the vendor publishes it. Lower it to
+    # catch a just-published bar sooner, at the cost of more vendor calls.
+    "ohlcv_cache_recheck_seconds": 30 * 60,
+
+    # Multiplier applied to the concise-tuned word budgets when report_style
+    # is "balanced" (agent_utils.scale_word_budget). See _BALANCED_WORD_SCALE
+    # there for the ITC.NS measurement behind the 2.5 -> 4.0 raise: the cap
+    # compressed the reasoning agents 3-3.5x while barely touching the
+    # data-dumping ones, so it was spending its whole budget cut on judgement.
+    # Lower it to buy wall-clock back, at a measurable cost in analysis depth.
+    "balanced_word_scale": 4.0,
 
     # ON since 2026-08-31. A run takes 4-14 minutes and a transient provider
     # disconnect part-way through used to throw all of it away: KAYNES on
@@ -513,13 +557,37 @@ DEFAULT_CONFIG = _apply_env_overrides({
     #   2. yfinance - Yahoo per-symbol feed; hard-capped near 12 articles
     #      regardless of the count requested, and its ticker feed mixes in
     #      sector/peer stories (see _company_specificity_note).
-    #   3. gdelt - genuinely global web-news API and the only other true
-    #      search, but demoted: it throttles aggressively (HTTP 429 plus a
-    #      200-with-plain-text form) and can stay blocked for long stretches,
-    #      so it cannot be depended on for company news.
-    #   4. alpha_vantage - REJECTS Indian tickers outright ("Invalid ticker
+    #   3. alpha_vantage - REJECTS Indian tickers outright ("Invalid ticker
     #      format: TMPV.BSE"); useful only for US-listed symbols.
-    #   5. finnhub - free tier is US/major-market-centric.
+    #   4. finnhub - free tier is US/major-market-centric.
+    #
+    # gdelt REMOVED from the chain 2026-09-05. It had been kept as a
+    # fallback despite throttling, on the theory that a throttled fallback
+    # still beats no fallback. Measurement says otherwise: it is now
+    # failing constantly, and a throttled attempt is not free.
+    #
+    #   * Every observed attempt over 2026-09-04..05 returned HTTP 429 and
+    #     gave up after both retries -- 2 full give-up sequences in a single
+    #     ITC.NS run, contributing ZERO articles.
+    #   * Checked directly on 2026-09-05, the two global-news chains
+    #     "gdelt,yfinance,alpha_vantage,finnhub" and
+    #     "alpha_vantage,yfinance,finnhub" returned byte-identical output
+    #     (968 chars) -- i.e. gdelt contributed nothing either way.
+    #   * The cost is real: gdelt_max_retries=2 with
+    #     gdelt_retry_base_delay=5.0 means 5s + 10s of sleeping plus up to
+    #     three gdelt_timeout_seconds=15 attempts, so a fully throttled
+    #     fetch burns ~45s of wall clock to return nothing. That is paid
+    #     BEFORE any LLM call, on the critical path.
+    #
+    # Being third in the chain made this worse, not better: it is only
+    # reached when google_news AND yfinance have both already failed --
+    # exactly the moment a run can least afford another 45s of dead time
+    # before falling through to alpha_vantage.
+    #
+    # The gdelt_* tuning knobs below are deliberately LEFT IN PLACE so
+    # re-adding is a one-word edit to this string. Re-add when GDELT's rate
+    # limiting eases; it remains the only genuinely global web-news search
+    # in the set, and the reason it was ever here has not changed.
     #
     # technical_indicators defaults to yfinance (local stockstats computation,
     # no external quota) because the free Alpha Vantage key is capped at
@@ -531,7 +599,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "core_stock_apis":      "yfinance",
         "technical_indicators": "yfinance",
         "fundamental_data":     "yfinance",
-        "news_data":            "google_news,yfinance,gdelt,alpha_vantage,finnhub",
+        "news_data":            "google_news,yfinance,alpha_vantage,finnhub",
     },
 
     # Tool-level overrides (takes precedence over category-level above)
@@ -671,8 +739,43 @@ def get_fast_config() -> dict:
     reduces the data fetched — see the invariant above.
     """
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["max_debate_rounds"] = 1
-    config["max_risk_discuss_rounds"] = 1
+    # Restored to 2 (2026-09-03), matching DEFAULT_CONFIG and the baseline.
+    #
+    # At 1, the bull/bear exchange is bull -> bear and stops. The bull never
+    # answers the bear, so an unsupported bull claim reaches the Research
+    # Manager unchallenged. ITC.NS 2026-09-02 is the worked example: the bull
+    # asserted "multi-year support at 253-255" (sourced, unattributed, from a
+    # StockTwits post; the stock had not traded there since 2022) and that
+    # claim became the load-bearing pillar of a Buy-the-dip Overweight. The
+    # SAME ticker at 2 rounds gave the bull a second turn, in which it had to
+    # engage the bear directly and conceded the honest version -- "that's the
+    # lowest print in the 13-month dataset" -- arguing fundamental value
+    # instead. Underweight, with reachable levels.
+    #
+    # This was the single biggest wall-clock lever, and giving it up is a
+    # deliberate trade. It is affordable now for a reason that did not hold
+    # when the profile was written: the analyst phase runs concurrently
+    # (below) and the provider switch cut per-call latency roughly 9x, so a
+    # full run measured 3m57s even before this. Speed now comes from
+    # concurrency and a faster model rather than from truncating the
+    # reasoning, which is the only one of the three that was ever free.
+    #
+    # Set TRADINGAGENTS_MAX_DEBATE_ROUNDS=1 to go back if latency matters
+    # more than the verdict -- but re-run the ITC/SIEMENS scorecard first.
+    #
+    # NOT re-assigned here, deliberately. This function used to hardcode
+    # `config["max_debate_rounds"] = 2` at this point, which runs AFTER
+    # _apply_env_overrides has already populated DEFAULT_CONFIG -- so the
+    # escape hatch the comment above advertises silently did nothing for
+    # anyone on the fast profile (which is the API's and the web UI's
+    # default, i.e. every real user). Verified: with
+    # TRADINGAGENTS_MAX_DEBATE_ROUNDS=1 set, DEFAULT_CONFIG read 1 and
+    # get_fast_config() still returned 2.
+    #
+    # Inheriting the deep-copied value instead keeps the intended default
+    # (fast == DEFAULT == 2) while letting the env var actually reach the
+    # graph. Do not re-add an assignment here without also giving the
+    # override somewhere else to land.
     # Run the four analysts concurrently instead of chained. They are
     # independent (each needs only ticker + date, none reads another's
     # report) and each now owns its own message channel, so this is a pure

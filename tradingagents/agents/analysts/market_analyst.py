@@ -50,12 +50,37 @@ def create_market_analyst(llm):
         # words of market commentary, which at typical generation speed is
         # over a minute of wall-clock for this one call alone.
         depth_instruction = (
-            f"HARD LIMIT: {scale_word_budget(250)} words maximum. Lead with the trend verdict, then only the "
-            "indicator readings that justify it. No preamble, no restating the snapshot "
-            "back, no per-indicator walkthrough."
+            f"HARD LIMIT: {scale_word_budget(250)} words maximum, EXCLUDING the "
+            "Support & Resistance block required below. Lead with the trend "
+            "verdict, then only the indicator readings that justify it. No "
+            "preamble, no restating the snapshot back, no per-indicator "
+            "walkthrough."
             if concise
             else "Write a very detailed and nuanced report of the trends you observe."
         )
+        # Structural, not prose -- and therefore NOT subject to the word
+        # budget above. ITC.NS 2026-09-02: under "balanced" the market report
+        # came in at 647 words against a 625 cap and contained the word
+        # "support" exactly ZERO times, while the same ticker under
+        # "detailed" produced a full S/R section stating "no measured support
+        # below 255.50 in 13 months". That sentence was the only place in the
+        # entire system that contradicted a ~253-255 "multi-year support"
+        # claim which had come from a retail StockTwits post -- and with the
+        # section gone, the claim went unchallenged into the debate and
+        # became the load-bearing pillar of a Buy-the-dip verdict.
+        #
+        # The failure was not that the model judged S/R unimportant; it was
+        # that "only the evidence that justifies your verdict" plus a hard
+        # cap makes price STRUCTURE lose to indicator READINGS every time.
+        # Exempting it from the cap is what makes the trade-off explicit
+        # rather than silent.
+        levels_instruction = """
+
+REQUIRED — **Support & Resistance** (a separate block, and it does NOT count against any word limit above):
+- List the specific price levels that matter, each with the concrete evidence for it (a dated high/low from the recent-closes table, a moving average, a band edge). No level without evidence.
+- State explicitly how far back the data you were given actually goes, and say so in the form "over the N sessions provided". Never describe a level as "multi-year", "long-term" or "historical" support unless the snapshot itself covers that span -- it does not.
+- If there is NO measured support below the current price within the data provided, say that in exactly those terms. That absence is a finding, not a gap to skip: it means downside is price discovery.
+- If another report cites a support or resistance level you cannot corroborate from this snapshot, say so plainly rather than repeating it."""
         # Markdown tables are disproportionately token-expensive (row
         # scaffolding, padding, repeated headers) for the information they
         # add over prose at this length.
@@ -97,7 +122,9 @@ The verified market snapshot below has already been fetched before you were invo
 {verified_snapshot}
 </verified_market_snapshot>
 
-{depth_instruction} Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
+{depth_instruction}{levels_instruction}
+
+Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + get_india_market_instruction("market")
             + table_instruction
             + get_language_instruction()

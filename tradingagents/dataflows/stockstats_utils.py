@@ -231,12 +231,71 @@ def _load_ohlcv_from_alpha_vantage(symbol: str, start_str: str, end_str: str) ->
     return parsed[["Open", "High", "Low", "Close", "Volume"]]
 
 
-# How long a cache file that does NOT reach curr_date is trusted before we
-# try the vendor again. Bounds the retry rate so a genuine holiday, a
-# suspended scrip, or a delisting cannot turn every call into a fresh
-# download, while still letting a run started an hour after the close pick
-# up that session once the vendor publishes it.
+# Fallback for the recheck window when no config is loaded (bare programmatic
+# use, tests). The live value is config["ohlcv_cache_recheck_seconds"]; see
+# default_config.py for what it bounds and why.
 _STALE_CACHE_RECHECK_SECONDS = 30 * 60
+
+
+def _cache_date_extents(data_file: str) -> "tuple[pd.Timestamp | None, pd.Timestamp | None]":
+    """``(newest row with a Close, newest row of any kind)`` from the cache.
+
+    Both are needed because they answer different questions, and the gap
+    between them is itself the signal that matters.
+
+    Deliberately not "the newest date in the file": yfinance publishes a
+    partially-consolidated bar for the current session, with a real date and
+    volume but Open/High/Low/Close all NaN. ITC.NS 2026-09-02 cached exactly
+    that --
+
+        2026-08-31,255.5,266.55,255.5,266.0,24575845
+        2026-09-01,,,,,31232541        <- date + volume, no prices
+
+    -- and a date-only freshness check reads the 09-01 row as "the vendor has
+    published that session", when the row is unusable and gets dropped a few
+    lines later by the dropna(subset=["Close"]) in get_stock_stats. The run
+    then analysed 08-31 prices while the stock had closed 4.3% higher on
+    09-01, and recommended an entry that was never fillable.
+
+    Reading Close (not just Date) is what makes the freshness question
+    "has the vendor published a USABLE bar for that session", which is the
+    question the caller actually needs answered. And when the two disagree
+    -- a dated row newer than the newest priced one -- that is positive
+    evidence the vendor is already publishing a session we hold only as an
+    unusable stub, which is a stronger signal than any elapsed-time guess.
+    """
+    try:
+        frame = pd.read_csv(
+            data_file,
+            usecols=lambda c: str(c).strip().lower() in ("date", "index", "close"),
+            on_bad_lines="skip",
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreadable cache is a refetch
+        logger.warning("Could not read cache %s (%s); refetching", data_file, exc)
+        return None, None
+
+    if frame.empty:
+        return None, None
+
+    cols = {str(c).strip().lower(): c for c in frame.columns}
+    date_col = cols.get("date") or cols.get("index")
+    close_col = cols.get("close")
+    if date_col is None:
+        return None, None
+
+    dates = pd.to_datetime(frame[date_col], errors="coerce", utc=True)
+    newest_dated = dates.dropna()
+    newest_dated = newest_dated.max().tz_localize(None) if not newest_dated.empty else None
+
+    # No Close column at all is a shape we cannot vet -- report the date-only
+    # answer for both rather than forcing a refetch on every call.
+    if close_col is None:
+        return newest_dated, newest_dated
+
+    priced = dates[pd.to_numeric(frame[close_col], errors="coerce").notna()].dropna()
+    newest_priced = priced.max().tz_localize(None) if not priced.empty else None
+    return newest_priced, newest_dated
 
 
 def _cache_covers_date(data_file: str, curr_date_dt: pd.Timestamp) -> bool:
@@ -251,27 +310,40 @@ def _cache_covers_date(data_file: str, curr_date_dt: pd.Timestamp) -> bool:
     prices and never saw a -6.5% session (3943 -> 3685). The file was
     byte-identical to the previous day's, which is how it went unnoticed.
 
-    Returns True (use the cache) when it already contains a row on or after
-    curr_date, and when it does not but was written recently enough that
-    re-asking would just re-confirm the same answer. Returns False to force
-    a refetch. Any read failure returns False -- refetching is always safe,
-    trusting an unreadable cache is not.
+    Returns True (use the cache) when it already contains a PRICED row on or
+    after curr_date, and when it does not but was written recently enough
+    that re-asking would just re-confirm the same answer. Returns False to
+    force a refetch. Any read failure returns False -- refetching is always
+    safe, trusting an unreadable cache is not.
+
+    Freshness checking as a whole is gated by
+    config["ohlcv_cache_freshness_check"]; when that is off the caller never
+    reaches here and the cache is reused for the whole day (the original
+    behaviour, and the one both stale-price incidents ran on).
     """
     try:
-        last = pd.read_csv(
-            data_file, usecols=lambda c: str(c).strip().lower() in ("date", "index"),
-            on_bad_lines="skip", encoding="utf-8",
-        )
-        if last.empty:
+        newest_priced, newest_dated = _cache_date_extents(data_file)
+        if newest_priced is None:
             return False
-        dates = pd.to_datetime(last.iloc[:, 0], errors="coerce", utc=True).dropna()
-        if dates.empty:
-            return False
-        # tz-strip so a tz-aware cache compares against a naive curr_date.
-        if dates.max().tz_localize(None) >= curr_date_dt:
+        if newest_priced >= curr_date_dt:
             return True
+        if newest_dated is not None and newest_dated > newest_priced:
+            # The vendor has already published a session we only hold as a
+            # price-less stub (ITC.NS 2026-09-01: date + volume, OHLC all
+            # NaN). Waiting out the recheck window here would serve prices we
+            # already know to be behind -- refetch now, not in 30 minutes.
+            logger.info(
+                "Cache %s holds an unpriced %s row; refetching for %s",
+                os.path.basename(data_file),
+                newest_dated.date(),
+                curr_date_dt.date(),
+            )
+            return False
+        recheck_seconds = get_config().get(
+            "ohlcv_cache_recheck_seconds", _STALE_CACHE_RECHECK_SECONDS
+        )
         age = time.time() - os.path.getmtime(data_file)
-        return age < _STALE_CACHE_RECHECK_SECONDS
+        return age < recheck_seconds
     except Exception as exc:  # noqa: BLE001 - a bad cache is a refetch, not an error
         logger.warning("Could not date-check cache %s (%s); refetching", data_file, exc)
         return False
@@ -310,7 +382,14 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
         except OSError as e:
             logger.error(f"Could not remove stale cache {data_file}: {e}")
 
-    if os.path.exists(data_file) and _cache_covers_date(data_file, curr_date_dt):
+    # Freshness checking is opt-out (config["ohlcv_cache_freshness_check"]).
+    # Off means "the file exists, so use it" for the rest of the day --
+    # exactly the behaviour that let KAYNES.NS and ITC.NS analyse days-old
+    # prices. See default_config.py for both incidents.
+    freshness_on = get_config().get("ohlcv_cache_freshness_check", True)
+    if os.path.exists(data_file) and (
+        not freshness_on or _cache_covers_date(data_file, curr_date_dt)
+    ):
         data = pd.read_csv(data_file, on_bad_lines="skip", encoding="utf-8")
     else:
         # retry_on_empty: price history for a live symbol coming back empty

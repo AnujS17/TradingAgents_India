@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 
+import pandas as pd
 from langchain_core.messages import AIMessage
 
 from tradingagents.agents.schemas import (
@@ -22,6 +23,35 @@ from tradingagents.agents.utils.structured import (
     invoke_structured_or_freetext,
 )
 from tradingagents.dataflows.config import get_config
+
+
+def _sessions_missed(as_of: str, trade_date: str) -> int:
+    """Trading sessions strictly between the anchor bar and the analysis date.
+
+    Weekday counting, not calendar days: a Friday close read on the
+    following Monday is 3 calendar days old but misses NOTHING, while
+    ITC.NS's 08-31 (Mon) close read on 09-02 (Wed) is 2 calendar days old
+    and misses a full session -- the one in which the stock rose 4.3%.
+    Calendar arithmetic cannot tell those apart; weekday arithmetic can.
+
+    Exchange holidays are not modelled, so a holiday inside the span reads
+    as a missed session. That direction is deliberate: a spurious "may be
+    stale" warning costs a sentence of prompt and some caution, while a
+    missed staleness warning costs an unfillable recommendation.
+
+    Returns 0 on any parse failure -- an anchor that cannot be dated falls
+    back to the previous unconditional behaviour rather than crying stale.
+    """
+    try:
+        start = pd.Timestamp(as_of).normalize()
+        end = pd.Timestamp(trade_date).normalize()
+    except Exception:  # noqa: BLE001 - undateable anchor is not a stale anchor
+        return 0
+    if pd.isna(start) or pd.isna(end) or end <= start:
+        return 0
+    # Strictly between: the anchor's own bar is not missed, and the analysis
+    # date itself may not have traded yet when the run starts.
+    return max(0, len(pd.bdate_range(start, end)) - 2)
 
 
 def _price_anchor(ticker: str, trade_date: str | None) -> str:
@@ -64,6 +94,40 @@ def _price_anchor(ticker: str, trade_date: str | None) -> str:
         as_of = str(latest.get("Date", ""))[:10]
     except Exception:  # noqa: BLE001 - anchor is an aid, never a dependency
         return ""
+
+    missed = _sessions_missed(as_of, trade_date)
+
+    if missed:
+        # A stale anchor must not be binding. ITC.NS 2026-09-02: the anchor
+        # quoted the 08-31 close of 255.50 while the stock had closed at
+        # 266.60 on 09-01 (+4.3%), and the "must transact at THIS price"
+        # instruction below did exactly what it says -- the Trader proposed
+        # an entry at 255.50 that was never fillable at any point afterwards.
+        # The BASELINE system, which had no anchor at all, read the same
+        # stale snapshot and still produced reachable levels (270, into the
+        # analysts' 268-272 supply shelf) precisely because nothing forced
+        # it onto the stale print.
+        #
+        # So the anchor is only ever as good as its bar. When it is behind,
+        # it degrades to a floor-level sanity check (it still stops the
+        # SKYGOLD "entry 5000 against a 848 high" class of fabrication) and
+        # hands primacy back to the analysts' cited levels.
+        session_word = "session has" if missed == 1 else "sessions have"
+        return (
+            f"\n\nMost recent price on file for {ticker}: {close:,.2f} "
+            f"(close of {as_of}).\n**This is STALE: at least {missed} trading "
+            f"{session_word} passed between that close and the "
+            f"{trade_date} analysis date, so the live price is NOT this "
+            "number and may differ materially.** Treat it only as an "
+            "order-of-magnitude sanity check -- a proposed level ten times "
+            "or one tenth of it is certainly wrong. Do NOT anchor your entry "
+            "or stop to it. Prefer the specific levels the analysts cite "
+            "(support/resistance shelves, moving averages, stated "
+            "accumulation or distribution zones), and if the news or "
+            "sentiment reports describe a price move after "
+            f"{as_of}, weight that over this figure. State in your reasoning "
+            "that the reference price is stale."
+        )
 
     return (
         f"\n\nLast traded price for {ticker}: {close:,.2f} "

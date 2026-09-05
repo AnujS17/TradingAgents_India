@@ -161,14 +161,56 @@ def build_verified_market_snapshot(
             for row in recent.itertuples(index=False)
         )
 
-        if pd.Timestamp(latest["Date"]).date() < requested_date.date():
-            lines.extend(
-                [
+        latest_ts = pd.Timestamp(latest["Date"])
+        if latest_ts.date() < requested_date.date():
+            # Weekday count, not calendar days: a Friday bar read on Monday
+            # misses nothing, while ITC.NS's Monday 08-31 bar read on
+            # Wednesday 09-02 misses a full session -- the one in which the
+            # stock rose 4.3%.
+            # requested_date arrives as a datetime.datetime, not a Timestamp
+            # -- normalize() is a Timestamp method, so it must be wrapped.
+            missed = max(0, len(pd.bdate_range(
+                latest_ts.normalize(),
+                pd.Timestamp(requested_date).normalize(),
+            )) - 2)
+            if missed:
+                # The old text here ("the latest prior trading date was
+                # used") was true and useless: it reads as routine
+                # weekend/holiday handling, so every downstream agent
+                # ignored it. ITC.NS 2026-09-02 is what that cost -- the
+                # snapshot quoted the 08-31 close of 255.50 while the news
+                # report in the SAME run led with "ITC Rallies 4.3%" dated
+                # 09-01, and not one agent reconciled the two. The bull even
+                # cited the rally as a catalyst while endorsing an entry at
+                # the pre-rally price.
+                #
+                # Naming the number of missed sessions, and pointing at the
+                # news reports as the cross-check, is what turns this from a
+                # footnote into something an agent can act on.
+                session_word = "session falls" if missed == 1 else "sessions fall"
+                lines.extend([
                     "",
-                    "Note: requested date was not an available trading row; "
-                    "the latest prior trading date was used.",
-                ]
-            )
+                    f"**STALENESS WARNING: this snapshot is behind.** The latest "
+                    f"row is {latest_ts.strftime('%Y-%m-%d')}, but roughly "
+                    f"{missed} trading {session_word} between it and the "
+                    f"requested date of {curr_date}. The vendor had not "
+                    "published those bars when this ran, so every price and "
+                    "indicator above predates them.",
+                    "",
+                    "Act on this: if the news or sentiment reports mention a "
+                    f"price move after {latest_ts.strftime('%Y-%m-%d')}, the "
+                    "live price is NOT the close shown above and you must say "
+                    "so. Do not present these levels as current, and do not "
+                    "propose an entry, stop or exit that only makes sense at "
+                    "the stale price.",
+                ])
+            else:
+                lines.extend([
+                    "",
+                    "Note: the requested date was not an available trading row "
+                    "(weekend or holiday); the latest prior trading date was "
+                    "used. No trading session was missed.",
+                ])
 
         return "\n".join(lines)
     except Exception as exc:

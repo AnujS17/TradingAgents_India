@@ -68,8 +68,30 @@ def get_language_instruction() -> str:
 #
 # So the fix is not mainly about word count — it is those two structural
 # allowances. "balanced" keeps the tables and raises the coverage-bullet cap,
-# and scales the word budgets by _BALANCED_WORD_SCALE on top.
-_BALANCED_WORD_SCALE = 2.5
+# and scales the word budgets by the balanced_word_scale config key on top.
+#
+# Raised 2.5 -> 4.0 (2026-09-03) after measuring the ITC.NS head-to-head. The
+# compression at 2.5 was not spread evenly -- it fell almost entirely on the
+# agents doing the REASONING and barely touched the ones dumping data:
+#
+#     agent          cap    balanced    detailed   compression
+#     market         625     647 w       1945 w      3.0x
+#     bull           500     380 w       1241 w      3.3x
+#     bear           500     417 w       1447 w      3.5x
+#     fundamentals   625    1871 w       3365 w      1.8x
+#     news           750    2624 w       3088 w      1.2x
+#
+# Tabular data does not compress, so the cap silently spent its entire budget
+# cut on judgement. The market analyst landed at 647 words against a 625 cap
+# and, having spent them on indicator readings, emitted the word "support"
+# ZERO times -- deleting the one statement in the run that contradicted a
+# retail-sourced "multi-year support" claim, which then carried the verdict.
+#
+# 4.0 puts bull/bear at 800 and the analysts at 1000-1200: still well under
+# detailed, but past the point where structure loses to readings. Lower it to
+# buy wall-clock back, but re-run the ITC or SIEMENS scorecard afterwards --
+# the failure mode this guards against is silent by construction.
+_BALANCED_WORD_SCALE = 4.0
 
 
 def get_report_style() -> str:
@@ -94,7 +116,10 @@ def keeps_markdown_tables() -> bool:
 def scale_word_budget(concise_words: int) -> int:
     """Scale a concise-tuned word budget for the active style."""
     if get_report_style() == "balanced":
-        return int(concise_words * _BALANCED_WORD_SCALE)
+        from tradingagents.dataflows.config import get_config
+
+        scale = get_config().get("balanced_word_scale", _BALANCED_WORD_SCALE)
+        return int(concise_words * scale)
     return concise_words
 
 
@@ -124,6 +149,51 @@ def get_brevity_instruction(max_words: int) -> str:
         "then only the evidence that actually supports it. No preamble, no "
         "recap of what other analysts said." + table_clause
     )
+
+
+def get_evidence_precedence_instruction() -> str:
+    """Rank the evidence a debate agent is looking at, by reliability.
+
+    Every analyst report is handed to the debate agents as one undifferentiated
+    block of text, so a number computed from a filed cash-flow statement and a
+    number quoted from a stranger's tweet arrive looking exactly alike. Without
+    a stated ranking the agents pick whichever is more quotable, and in
+    practice that is the tweet.
+
+    ITC.NS 2026-09-02, all three in a single run:
+
+      * The fundamentals report stated "Dividend Yield: 0.0602" from the
+        vendor, and computed a 112%-of-FCF payout directly from the
+        statements (dividends 182.7B vs FCF 162.8B). The debate used
+        "~5.2% yield" and "~74% payout" TWELVE times instead -- both
+        traceable to one promotional Equitymaster tweet dated two weeks
+        earlier. The bull cited 74% in the same debate where the bear cited
+        112%, and nobody reconciled them.
+      * "ROE ~35% / ROCE ~39%" was asserted by four separate agents. Neither
+        figure appears anywhere in the retrieved fundamentals at all; both
+        came from that same tweet.
+      * "Multi-year support at 253-255" -- the pillar the final Overweight
+        rested on -- came from a StockTwits post, as did the "weekly RSI
+        bullish divergence" beside it. The system never computed a weekly
+        RSI, and the price had not traded in that band for four years.
+
+    None of this was hallucination: the news and sentiment analysts attributed
+    every one of these correctly. The failure was purely one of PRECEDENCE at
+    the debate layer, which is where this instruction lands.
+    """
+    return """
+
+EVIDENCE PRECEDENCE — apply this whenever two sources disagree:
+1. Figures computed in this run from filed statements or the verified market snapshot (cash-flow lines, OHLCV, indicator values) outrank everything else. They are reproducible; nothing below is.
+2. Vendor reference data quoted in the fundamentals report (P/E, dividend yield, 52-week range) comes next.
+3. Named professional coverage (a broker note, an exchange filing, an established outlet) comes next.
+4. Social posts, promotional research blurbs, forum comments and undated marketing figures rank LAST. Treat these as sentiment evidence -- what people believe -- never as factual evidence about the company.
+
+Rules that follow from this:
+- If a tier-4 source gives a metric this run also computed itself, use the computed one and say the two disagree. Never quote the social figure as if it were the fact.
+- Never assert a price level, valuation ratio or return metric that appears in no report above. If you cannot point to where a number came from, do not use it.
+- Carry qualifiers with the number. "5 bullish of 30 messages, 24 unlabelled" must not become "bullish 5:1"; "the lowest print in the 13 months provided" must not become "multi-year support".
+- When you disagree with the other analyst about a FIGURE (not a judgement), resolve it explicitly against this ranking before arguing about what it means."""
 
 
 def get_india_market_instruction(scope: str = "general") -> str:

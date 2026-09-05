@@ -17,6 +17,7 @@ from tradingagents.agents.schemas import (
     render_pm_decision,
 )
 from tradingagents.agents.utils.agent_utils import (
+    get_evidence_precedence_instruction,
     get_instrument_context_from_state,
     get_language_instruction,
 )
@@ -86,7 +87,7 @@ def create_portfolio_manager(llm):
 
 ---
 
-Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
+Be decisive and ground every conclusion in specific evidence from the analysts.{get_evidence_precedence_instruction()}{get_language_instruction()}"""
 
         final_trade_decision = invoke_structured_or_freetext(
             structured_llm,

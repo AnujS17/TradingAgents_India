@@ -1,5 +1,6 @@
 from tradingagents.agents.utils.agent_utils import (
     get_brevity_instruction,
+    get_evidence_precedence_instruction,
     get_instrument_context_from_state,
     get_language_instruction,
     get_india_market_instruction,
@@ -57,7 +58,7 @@ Latest world affairs news: {news_report}
         dynamic_context = f"""Conversation history of the debate: {history}
 Last bull argument: {current_response}
 Use this information to deliver a compelling bear argument, refute the bull's claims, and engage in a dynamic debate that demonstrates the risks and weaknesses of investing in the {target_label}.
-""" + get_brevity_instruction(200) + get_language_instruction()
+""" + get_brevity_instruction(200) + get_evidence_precedence_instruction() + get_language_instruction()
 
         response = invoke_with_cache_breakpoint(llm, static_context, dynamic_context)
 
