@@ -1,0 +1,22 @@
+# Automatic HTTPS (Let's Encrypt, renews itself) for whatever DOMAIN is
+# set to in .env.production -- a real domain, or an sslip.io address if
+# you don't have one yet (see DEPLOY.md). Caddy cannot issue a cert for a
+# bare IP; DOMAIN must be something DNS actually resolves to this VM.
+{$DOMAIN} {
+	# FastAPI under /backend/*, prefix stripped before forwarding -- so
+	# `https://{$DOMAIN}/backend/auth/login` reaches the api container as
+	# `/auth/login`, no backend code changes needed. Deliberately NOT
+	# `/api/*`: Next.js already owns that prefix for its own route
+	# handlers (NextAuth's /api/auth/[...nextauth], and the SSE proxy at
+	# /api/runs/[runId]/stream) -- routing all of /api/* here would shadow
+	# both and break sign-in and the live stream.
+	handle_path /backend/* {
+		reverse_proxy api:8000
+	}
+
+	# Everything else -- the app itself, and Next.js's own /api/* routes
+	# -- goes to the Next.js container.
+	handle {
+		reverse_proxy web:3000
+	}
+}

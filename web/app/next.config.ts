@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
   // from ones not on this list, which silently breaks hydration (see
   // node_modules/next/dist/docs/.../allowedDevOrigins.md).
   allowedDevOrigins: ['127.0.0.1', 'localhost'],
+  // Docker deployment (web/app/Dockerfile): traces only the files each
+  // page actually needs into .next/standalone, including a minimal
+  // server.js, so the runtime image needs no node_modules install --
+  // node_modules/next/dist/docs/.../output.md. No effect on `next dev`.
+  output: 'standalone',
 };
 
 export default nextConfig;

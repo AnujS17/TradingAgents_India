@@ -1,6 +1,15 @@
 .git
 .venv
-.env
+# Wildcarded (not just literal .env): the Dockerfile's builder stage does
+# `COPY . .` into the image, so a same-directory .env.production (real
+# secrets, created per DEPLOY.md for docker-compose's env_file: to read at
+# RUNTIME) would otherwise get baked into the image layers at BUILD time --
+# retrievable by anyone who can pull the image, and not removable by a
+# later layer. Neither .env.production.example nor .env.example carries
+# secrets, but the backend image needs no .env file at all (docker-compose
+# injects real values via env_file: after the image is already built), so
+# nothing here needs a negation.
+.env*
 .claude
 .idea
 .vscode
@@ -13,3 +22,18 @@ results
 eval_results
 Dockerfile
 docker-compose.yml
+# The api/worker image (this Dockerfile) needs none of these -- excluding
+# them keeps the build context (and therefore every `docker build`) fast.
+# web/app has its own Dockerfile + .dockerignore and is built separately
+# by docker-compose.yml.
+web
+graphify-out
+.superpowers
+.impeccable
+docs
+tests
+node_modules
+*.md
+# pyproject.toml's readme = "README.md" is read by setuptools during
+# `pip install .` -- the blanket *.md exclude above must not eat it.
+!README.md
