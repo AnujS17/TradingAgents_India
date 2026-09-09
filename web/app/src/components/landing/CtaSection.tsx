@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { SearchForm } from '@/components/SearchForm';
 import { useScrollReveal } from '@/lib/scroll-reveal';
 
@@ -62,7 +63,17 @@ export function CtaSection() {
           <p className="text-white/55 mt-5 max-w-md mx-auto">
             Pick a ticker. Watch four analysts, a bull, a bear and a risk panel argue it out.
           </p>
-          <SearchForm variant="cta" />
+          {/* Same boundary Hero.tsx puts around its own SearchForm, and for
+              the same reason: SearchForm calls useSearchParams() to seed
+              itself from a /?ticker=…&date=… deep link, which opts the
+              subtree into client-side rendering. Without a Suspense
+              boundary here, `next build` fails prerendering "/" outright
+              (missing-suspense-with-csr-bailout) -- a production-only
+              failure that never appears under `npm run dev`. Scoped to the
+              form so the rest of the section still prerenders. */}
+          <Suspense fallback={<p className="text-white/40 text-sm mt-8">Loading the search form…</p>}>
+            <SearchForm variant="cta" />
+          </Suspense>
         </div>
       </div>
     </section>
