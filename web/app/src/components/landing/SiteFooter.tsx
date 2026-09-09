@@ -32,12 +32,12 @@ export function SiteFooter({ variant = 'landing' }: { variant?: 'landing' | 'res
             <div className="md:col-span-2">
               <a href="#" className="flex items-center gap-2.5 font-tight font-extrabold text-lg text-[#010101]">
                 <span className="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">
-                  B
+                  T
                 </span>
-                Bench
+                TickerInvest
               </a>
               <p className="text-sm text-[#757575] mt-4 max-w-sm leading-relaxed">
-                Bench is a research tool for Indian-listed equities. Nothing on this page is
+                TickerInvest is a research tool for Indian-listed equities. Nothing on this page is
                 investment advice or a recommendation to buy or sell any security.
                 {/* TODO(legal): have this reviewed. Add entity name, SEBI status and full disclosures before launch. */}
               </p>
@@ -91,9 +91,9 @@ export function SiteFooter({ variant = 'landing' }: { variant?: 'landing' | 'res
         ) : (
           <Link href="/" className="flex items-center gap-2.5 font-tight font-extrabold text-lg text-[#010101]">
             <span className="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">
-              B
+              T
             </span>
-            Bench
+            TickerInvest
           </Link>
         )}
         <div
@@ -105,13 +105,13 @@ export function SiteFooter({ variant = 'landing' }: { variant?: 'landing' | 'res
         >
           {variant === 'research' && (
             <p className="text-sm text-[#757575] max-w-sm leading-relaxed">
-              Bench is a research tool for Indian-listed equities. Nothing on this page is investment
+              TickerInvest is a research tool for Indian-listed equities. Nothing on this page is investment
               advice or a recommendation to buy or sell any security.
               {/* TODO(legal): have this reviewed. Add entity name, SEBI status and full disclosures before launch. */}
             </p>
           )}
           <p className={variant === 'research' ? 'text-xs text-[#757575] mt-4' : 'text-xs text-[#757575]'}>
-            © 2026 Bench. Research tool, not investment advice.
+            © 2026 TickerInvest. Research tool, not investment advice.
           </p>
         </div>
       </div>

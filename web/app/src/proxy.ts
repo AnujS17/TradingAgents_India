@@ -21,7 +21,7 @@ export default withAuth({
 
 // Protects everything except: the login page itself, NextAuth's own
 // routes, static assets, and the landing page (/ stays public so an
-// unauthenticated visitor can see what Bench is before signing in --
+// unauthenticated visitor can see what TickerInvest is before signing in --
 // only the research flow itself requires an account).
 export const config = {
   matcher: [

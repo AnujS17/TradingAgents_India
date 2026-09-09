@@ -68,7 +68,7 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center bg-[#050A18] px-6">
       <div className="w-full max-w-sm">
         <h1 className="font-tight font-black text-white text-3xl mb-6 text-center">
-          {mode === 'signin' ? 'Sign in to Bench' : 'Create your Bench account'}
+          {mode === 'signin' ? 'Sign in to TickerInvest' : 'Create your TickerInvest account'}
         </h1>
 
         {/* Sign in / Sign up toggle -- two tabs, active one filled white. */}

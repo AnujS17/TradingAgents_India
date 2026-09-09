@@ -16,7 +16,7 @@ import { SiteFooter } from '@/components/landing/SiteFooter';
 export default async function HomePage() {
   // GET /runs now requires a bearer token (Task 6). This page is
   // deliberately public (proxy.ts's matcher excludes it on purpose, so a
-  // signed-out visitor can see what Bench is before signing in) -- a
+  // signed-out visitor can see what TickerInvest is before signing in) -- a
   // signed-out request here carries no token and 401s. Swallow that and
   // fall back to an empty list rather than letting it throw during server
   // render, which would replace the whole landing page with error.tsx.

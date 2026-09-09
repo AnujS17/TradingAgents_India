@@ -22,7 +22,7 @@ export function UseCases() {
       body: (
         <>
           Read the bear case <em>before</em> you enter, not after the position moves against
-          you. Bench forces the strongest argument against your idea into the open.
+          you. TickerInvest forces the strongest argument against your idea into the open.
         </>
       ),
       delay: '0s',

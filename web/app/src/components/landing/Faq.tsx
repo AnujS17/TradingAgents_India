@@ -20,7 +20,7 @@ const FAQ_ITEMS = [
     q: 'Is this investment advice?',
     a: (
       <>
-        No. Bench is a research tool. It shows the case for and against a stock, and the
+        No. TickerInvest is a research tool. It shows the case for and against a stock, and the
         reasoning behind a rating. It does not tell you what to do with your money.
       </>
     ),
@@ -40,7 +40,7 @@ const FAQ_ITEMS = [
     a: (
       <>
         You&rsquo;ll see it. Repeat runs of the same question, on the same day&rsquo;s data,
-        can genuinely land on different ratings when the evidence is close. Bench surfaces that
+        can genuinely land on different ratings when the evidence is close. TickerInvest surfaces that
         split rather than quietly showing whichever run finished last.
       </>
     ),

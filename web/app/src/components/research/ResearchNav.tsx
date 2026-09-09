@@ -18,12 +18,11 @@ export function ResearchNav({ profile }: { profile: AnalysisProfile }) {
       style={{ backgroundColor: 'rgba(5,10,24,.94)' }}
     >
       <div className="max-w-screen-xl mx-auto px-6 lg:px-8 h-16 flex items-center justify-between gap-6">
-        {/* TODO(name): wordmark is a placeholder, carried over from the landing nav. */}
         <Link href="/" className="flex items-center gap-2.5 font-tight font-extrabold text-lg text-white shrink-0">
           <span className="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">
-            B
+            T
           </span>
-          Bench
+          TickerInvest
         </Link>
         <SearchForm variant="nav" />
         <Link

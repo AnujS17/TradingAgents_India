@@ -18,7 +18,7 @@ function ComparePageHeader() {
           <span className="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">
             B
           </span>
-          Bench
+          TickerInvest
         </Link>
         <span className="text-white/30">/</span>
         <span className="font-tight font-bold text-white/85">Compare</span>

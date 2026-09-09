@@ -13,10 +13,9 @@ export function SiteNav() {
       <div className="max-w-screen-xl mx-auto px-6 lg:px-8 h-16 flex items-center justify-between">
         <a href="#" className="flex items-center gap-2.5 font-tight font-extrabold text-lg text-white">
           <span className="w-8 h-8 rounded-lg grad-navy flex items-center justify-center text-white text-sm font-black">
-            B
+            T
           </span>
-          Bench
-          {/* TODO(name): "Bench" is a placeholder wordmark carried over from the other landing-page draft. */}
+          TickerInvest
         </a>
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-white/75">
           <a href="#how" className="transition hover:opacity-75 hover:text-white">

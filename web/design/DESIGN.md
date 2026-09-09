@@ -1,4 +1,4 @@
-# Bench — web design reference
+# TickerInvest — web design reference
 
 How to build a new page for this site so it matches what already ships.
 
