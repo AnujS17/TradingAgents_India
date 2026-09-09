@@ -37,3 +37,7 @@ node_modules
 # pyproject.toml's readme = "README.md" is read by setuptools during
 # `pip install .` -- the blanket *.md exclude above must not eat it.
 !README.md
+
+# See .gitignore: private keys must never reach an image layer.
+*.key
+*.pem

@@ -96,9 +96,9 @@ docker compose version   # confirms the compose plugin is present
 ### 5. Get the code onto the VM
 
 ```bash
-git clone <your-repo-url> tradingagents
+git clone https://github.com/AnujS17/TradingAgents_India.git tradingagents
 cd tradingagents
-git checkout main   # or whichever branch you're deploying
+git checkout openrouter-routing   # where the deployable code currently lives
 ```
 
 (If the repo is private, set up a deploy key or use `gh auth login` /
@@ -113,9 +113,10 @@ cp web/app/.env.production.example web/app/.env.production
 
 Edit both with a real editor (`nano .env.production`) and fill in:
 
-- **`.env.production`**: `DOMAIN`, `NEXT_PUBLIC_API_BASE_URL`, at least one
-  LLM provider key (`OPENROUTER_API_KEY` matches the shipped default
-  model), `TRADINGAGENTS_API_JWT_SECRET` (generate with
+- **`.env.production`**: `DOMAIN`, `NEXT_PUBLIC_API_BASE_URL`, `DEEPSEEK_API_KEY`
+  (the engine config is pinned to DeepSeek direct in the template — the
+  `OPENROUTER_*` lines are only needed if you switch provider),
+  `TRADINGAGENTS_API_JWT_SECRET` (generate with
   `openssl rand -base64 32`), `TRADINGAGENTS_API_ALLOWED_ORIGINS` (JSON
   array of your real domain — see the file's own comment on why this
   isn't comma-separated), `TRADINGAGENTS_API_VAPID_SUBJECT`.
@@ -214,3 +215,43 @@ docker run --rm -v tradingagents_data:/data -v $(pwd):/backup alpine \
 - **`docker compose config` shows blank values for DOMAIN or
   NEXT_PUBLIC_API_BASE_URL**: you forgot `--env-file .env.production` on
   that command — see Step 7's explanation.
+
+---
+
+## Oracle specifics worth knowing before you start
+
+**"Out of host capacity" on A1 is the single most common blocker.** Ampere
+capacity in Always Free regions is genuinely constrained and the error
+appears at the final Create step, not before. It is not a fault in your
+account. Options, in order of effort: retry at a different hour (capacity
+frees up irregularly); pick a different Availability Domain in the same
+region; or create the instance in a different home region — but note the
+home region is fixed at signup and cannot be changed later, so if you have
+not signed up yet, choosing a less-contended region is worth thirty
+seconds of thought.
+
+**A1 is ARM (aarch64), not x86.** Everything in this stack supports it —
+`python:3.12-slim`, `node:22-slim` and `caddy:2-alpine` all publish arm64
+images, and Docker picks the right architecture automatically. The one
+place it can bite is a Python dependency with no aarch64 wheel, which
+falls back to compiling from source; the backend Dockerfile's builder
+stage installs `build-essential` for exactly that case.
+
+**Boot volume**: the 50 GB default is ample. The images total roughly 2–3
+GB, and the named volume holding SQLite plus caches grows slowly.
+
+**Always Free allowance**: 4 OCPU / 24 GB of A1 total, which you may split
+across instances or give entirely to one. Give it to one — the Next.js
+build is the memory-hungry step and it only happens on this box.
+
+**Connecting**: `ssh -i /path/to/private.key ubuntu@<public-ip>`. The user
+is `ubuntu` on Oracle's Ubuntu images (not `opc`, which is the Oracle
+Linux default). If the key was downloaded from the console, `chmod 600` it
+first or ssh will refuse it.
+
+**A note on the two firewalls**: after adding the VCN ingress rules, test
+from your own machine with `curl -v http://<public-ip>` BEFORE deploying
+anything. A hang or timeout means the security list is still wrong; an
+immediate connection refusal means the security list is fine and the
+instance simply has nothing listening yet, which at this stage is the
+correct answer.

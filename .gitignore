@@ -242,3 +242,9 @@ motion-audits/
 # which is real frontend source (API client, etc.), not a Python venv dir.
 !web/app/src/lib/
 !web/app/src/lib/**
+# Private keys must never enter the repo or an image layer: the
+# Dockerfile builder does `COPY . .`, so anything here is baked in.
+*.key
+*.pem
+id_rsa*
+id_ed25519*
